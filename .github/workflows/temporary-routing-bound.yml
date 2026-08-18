@@ -24,5 +24,8 @@ jobs:
           dependency-cache: "false"
           install-deps: "true"
           frozen-lockfile: "true"
-      - name: Run routing-description boundary regression
-        run: node scripts/run-vitest.mjs src/skills/workshop/service-description-boundary.test.ts
+      - name: Run routing-description boundary regressions
+        run: >-
+          node scripts/run-vitest.mjs
+          src/skills/workshop/service-description-boundary.test.ts
+          packages/gateway-protocol/src/schema/agents-models-skills-routing-description.test.ts
