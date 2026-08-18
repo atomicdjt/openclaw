@@ -1,0 +1,58 @@
+name: Validate 125740 routing bound
+
+on:
+  pull_request:
+    branches:
+      - validation/125740-ci-base
+
+permissions:
+  contents: read
+
+jobs:
+  focused-validation:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-deps: 'true'
+          frozen-lockfile: 'true'
+          dependency-cache: 'false'
+          use-actions-cache: 'true'
+      - name: Focused routing provenance tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/run-vitest.mjs \
+            src/skills/workshop/service-description-boundary.test.ts \
+            src/commands/doctor-skill-workshop-routing-provenance.test.ts \
+            packages/gateway-protocol/src/schema/agents-models-skills-routing-description.test.ts
+      - name: Changed-file static checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/check-changed.mjs -- \
+            src/skills/workshop/routing-description-provenance.ts \
+            packages/gateway-protocol/src/schema/agents-models-skills.ts \
+            src/skills/workshop/service-query.ts \
+            src/skills/workshop/frontmatter.ts \
+            src/gateway/server-methods/skills-workspace-handler.ts
+      - name: Protocol generation check
+        run: pnpm protocol:check
+      - name: Formatter check
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm exec oxfmt --check \
+            src/commands/doctor-skill-workshop-routing-provenance.test.ts \
+            src/commands/doctor-skill-workshop-sqlite.ts \
+            src/skills/workshop/service-description-boundary.test.ts \
+            src/skills/workshop/service-query.ts \
+            src/skills/workshop/frontmatter.ts \
+            src/gateway/server-methods/skills-workspace-handler.ts \
+            packages/gateway-protocol/src/schema/agents-models-skills-routing-description.test.ts
