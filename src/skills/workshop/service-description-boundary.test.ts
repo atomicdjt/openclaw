@@ -8,7 +8,12 @@ import {
 import { createTrackedTempDirs } from "../../test-utils/tracked-temp-dirs.js";
 import { parseSkillFrontmatter } from "../loading/frontmatter.js";
 import { writeSkill } from "../test-support/e2e-test-helpers.js";
-import { applySkillProposal, proposeUpdateSkill, reviseSkillProposal } from "./service.js";
+import {
+  applySkillProposal,
+  proposeCreateSkill,
+  proposeUpdateSkill,
+  reviseSkillProposal,
+} from "./service.js";
 import { hashSkillProposalContent, replaceSkillProposalDraft } from "./store.js";
 import type { SkillProposalReadResult, SkillProposalRecord } from "./types.js";
 
@@ -189,6 +194,7 @@ Final behavior.
     await expect(
       reviseSkillProposal({
         workspaceDir,
+        env: testState.env,
         proposalId: proposal.record.id,
         description: "Revise the legacy proposal summary.",
       }),
@@ -217,6 +223,7 @@ Final behavior.
     await expect(
       applySkillProposal({
         workspaceDir,
+        env: testState.env,
         proposalId: proposal.record.id,
       }),
     ).rejects.toThrow(/redraft/i);
