@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - test/125740-routing-output-bound
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
