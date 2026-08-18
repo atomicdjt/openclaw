@@ -24,3 +24,5 @@ jobs:
 
       - name: Run RED-to-GREEN verification
         run: bash scripts/tmp-125570-p1-runner.sh
+
+# Trigger commit after workflow registration.
