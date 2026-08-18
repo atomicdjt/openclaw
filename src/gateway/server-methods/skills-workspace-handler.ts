@@ -63,6 +63,7 @@ export function projectSkillProposalGatewayResult(value: unknown): unknown {
     return value;
   }
 
+  // SAFETY: the guards above establish that value is a non-null object before record access.
   const record = value as Record<string, unknown>;
   const projected = Object.fromEntries(
     Object.entries(record).map(([key, entry]) => [key, projectSkillProposalGatewayResult(entry)]),
