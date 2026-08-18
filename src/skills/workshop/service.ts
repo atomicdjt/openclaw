@@ -2,6 +2,7 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { sha256Hex } from "../../infra/crypto-digest.js";
 import { buildWorkspaceSkillStatus, resolveSkillStatusEntry } from "../discovery/status.js";
+import { parseSkillFrontmatter } from "../loading/frontmatter.js";
 import {
   assertInsideWorkspace,
   readWorkspaceSkillFile,
@@ -285,11 +286,15 @@ export async function proposeUpdateSkill(
     throw new Error("Update proposal requires content or composePatch.");
   }
   const description = resolveUpdateProposalDescription(input.description, targetSkill.description);
+  const skillDescription =
+    normalizeOptionalString(parseSkillFrontmatter(draftContent).description) ??
+    targetSkill.description;
 
   const now = new Date().toISOString();
   const prepared = prepareSkillProposalDraft({
     name: targetSkill.skillKey,
     description,
+    skillDescription,
     content: draftContent,
     fallbackFrontmatterContent: currentContent,
     date: now,
@@ -425,10 +430,16 @@ export async function reviseSkillProposal(
     const requestedContent = input.content ?? read.content;
     const nextVersion = nextProposalVersion(record.proposedVersion);
     const description = normalizeOptionalString(input.description) ?? record.description;
+    const skillDescription =
+      record.kind === "update"
+        ? (normalizeOptionalString(parseSkillFrontmatter(requestedContent).description) ??
+          normalizeOptionalString(parseSkillFrontmatter(read.content).description))
+        : undefined;
     const now = new Date().toISOString();
     const prepared = prepareSkillProposalDraft({
       name: record.target.skillKey,
       description,
+      ...(skillDescription ? { skillDescription } : {}),
       content: requestedContent,
       fallbackFrontmatterContent: read.content,
       version: nextVersion,
