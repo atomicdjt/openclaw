@@ -1,7 +1,7 @@
 name: Temporary #125570 patch runner
 
 on:
-  push:
+  pull_request:
     branches:
       - main
 
