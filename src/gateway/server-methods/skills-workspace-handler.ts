@@ -55,7 +55,7 @@ export type ResolvedSkillsWorkspace = Extract<
 
 export const SKILL_PROPOSAL_RESPONSE_HANDLED = Symbol("skill proposal response handled");
 
-function projectSkillProposalGatewayResult(value: unknown): unknown {
+export function projectSkillProposalGatewayResult(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(projectSkillProposalGatewayResult);
   }
