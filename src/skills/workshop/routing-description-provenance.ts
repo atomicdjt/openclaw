@@ -11,11 +11,6 @@ type DescriptionFields = {
   record: { description: string; routingDescription?: string };
 };
 
-/**
- * Returns the canonical routing description for an update proposal.
- * Legacy pending updates intentionally fail closed because their stored
- * description cannot distinguish routing metadata from proposal summary text.
- */
 export function requireUpdateRoutingDescription(
   record: Pick<SkillProposalRecord, "kind" | "routingDescription">,
 ): string | undefined {
