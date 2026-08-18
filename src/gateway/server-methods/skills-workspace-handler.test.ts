@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
-  projectSkillProposalGatewayResult,
   resolveSkillsAgentWorkspace,
+  runSkillsProposalWorkspaceHandler,
 } from "./skills-workspace-handler.js";
 import type { GatewayRequestContext } from "./types.js";
 
@@ -35,7 +35,13 @@ describe("resolveSkillsAgentWorkspace", () => {
 });
 
 describe("Skill Workshop Gateway response projection", () => {
-  it("removes routing provenance from proposal records without mutating input", () => {
+  it("removes routing provenance from proposal responses without mutating input", async () => {
+    const config: OpenClawConfig = {
+      agents: {
+        ownership: "explicit",
+        list: [{ id: "ops" }],
+      },
+    };
     const input = {
       record: {
         schema: "openclaw.skill-workshop.proposal.v1",
@@ -55,8 +61,21 @@ describe("Skill Workshop Gateway response projection", () => {
         routingDescription: "This unrelated field is not proposal provenance.",
       },
     };
+    let projected: unknown;
 
-    const projected = projectSkillProposalGatewayResult(input);
+    await runSkillsProposalWorkspaceHandler({
+      method: "skills.proposals.inspect",
+      rawParams: { agentId: "ops" },
+      respond: (ok, result, error) => {
+        expect(ok).toBe(true);
+        expect(error).toBeUndefined();
+        projected = result;
+      },
+      context: context(config),
+      validate: (params: unknown): params is { agentId: string } =>
+        Boolean(params && typeof params === "object" && "agentId" in params),
+      run: async () => input,
+    });
 
     expect(projected).toEqual({
       record: {
