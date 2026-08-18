@@ -737,6 +737,7 @@ const SkillProposalRecordSchema = closedObject({
   status: SkillProposalStatusSchema,
   title: NonEmptyString,
   description: NonEmptyString,
+  routingDescription: Type.Optional(Type.String()),
   createdAt: NonEmptyString,
   updatedAt: NonEmptyString,
   createdBy: SkillProposalSourceSchema,
