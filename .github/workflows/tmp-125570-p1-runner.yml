@@ -1,0 +1,26 @@
+name: Temporary 125570 P1 Runner
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp/125570-p1-red
+          fetch-depth: 100
+
+      - uses: ./.github/actions/setup-node-env
+        with:
+          install-deps: true
+          frozen-lockfile: true
+          dependency-cache: false
+
+      - name: Run RED-to-GREEN verification
+        run: bash scripts/tmp-125570-p1-runner.sh
