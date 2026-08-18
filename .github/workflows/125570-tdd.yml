@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/125570-legacy-tdd
+  pull_request:
 
 permissions:
   contents: read
