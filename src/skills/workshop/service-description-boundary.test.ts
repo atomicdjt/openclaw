@@ -12,6 +12,8 @@ import {
   proposeUpdateSkill,
   reviseSkillProposal,
 } from "./service.js";
+import { hashSkillProposalContent, replaceSkillProposalDraft } from "./store.js";
+import type { SkillProposalReadResult, SkillProposalRecord } from "./types.js";
 
 const tempDirs = createTrackedTempDirs();
 let testState: OpenClawTestState;
@@ -27,6 +29,27 @@ afterEach(async () => {
   await testState.cleanup();
   await tempDirs.cleanup();
 });
+
+async function rewriteAsLegacyPendingUpdate(params: {
+  proposal: SkillProposalReadResult;
+  liveDescription: string;
+  proposalSummary: string;
+}): Promise<void> {
+  const legacyContent = params.proposal.content.replace(
+    `description: ${JSON.stringify(params.liveDescription)}`,
+    `description: ${JSON.stringify(params.proposalSummary)}`,
+  );
+  expect(legacyContent).not.toBe(params.proposal.content);
+  const legacyRecord = {
+    ...params.proposal.record,
+    draftHash: hashSkillProposalContent(legacyContent),
+  } as SkillProposalRecord & { routingDescription?: string };
+  delete legacyRecord.routingDescription;
+  await replaceSkillProposalDraft({
+    record: legacyRecord,
+    content: legacyContent,
+  });
+}
 
 describe("Skill Workshop update description boundary", () => {
   it("keeps proposal summaries separate from applied skill routing descriptions", async () => {
@@ -112,6 +135,65 @@ Final behavior.
     });
     await expect(fs.readFile(activeSkillFile, "utf8")).resolves.toContain(
       `description: ${JSON.stringify(replacementDescription)}`,
+    );
+  });
+
+  it("requires a legacy pending update to be redrafted before revision", async () => {
+    const workspaceDir = await tempDirs.make("openclaw-skill-description-legacy-revise-");
+    const skillDir = path.join(workspaceDir, "skills", "legacy-revise");
+    const liveDescription = "Route legacy-revise for durable scheduling and recovery workflows.";
+    const proposalSummary = "Adjust one legacy behavior.";
+    await writeSkill({
+      dir: skillDir,
+      name: "legacy-revise",
+      description: liveDescription,
+      body: "# Legacy Revise\n\nExisting behavior.\n",
+    });
+    const proposal = await proposeUpdateSkill({
+      workspaceDir,
+      skillName: "legacy-revise",
+      description: proposalSummary,
+      content: "# Legacy Revise\n\nUpdated behavior.\n",
+    });
+    await rewriteAsLegacyPendingUpdate({ proposal, liveDescription, proposalSummary });
+
+    await expect(
+      reviseSkillProposal({
+        workspaceDir,
+        proposalId: proposal.record.id,
+        description: "Revise the legacy proposal summary.",
+      }),
+    ).rejects.toThrow(/redraft/i);
+  });
+
+  it("requires a legacy pending update to be redrafted before apply", async () => {
+    const workspaceDir = await tempDirs.make("openclaw-skill-description-legacy-apply-");
+    const skillDir = path.join(workspaceDir, "skills", "legacy-apply");
+    const activeSkillFile = path.join(skillDir, "SKILL.md");
+    const liveDescription = "Route legacy-apply for durable scheduling and recovery workflows.";
+    const proposalSummary = "Adjust one legacy behavior.";
+    await writeSkill({
+      dir: skillDir,
+      name: "legacy-apply",
+      description: liveDescription,
+      body: "# Legacy Apply\n\nExisting behavior.\n",
+    });
+    const proposal = await proposeUpdateSkill({
+      workspaceDir,
+      skillName: "legacy-apply",
+      description: proposalSummary,
+      content: "# Legacy Apply\n\nUpdated behavior.\n",
+    });
+    await rewriteAsLegacyPendingUpdate({ proposal, liveDescription, proposalSummary });
+
+    await expect(
+      applySkillProposal({
+        workspaceDir,
+        proposalId: proposal.record.id,
+      }),
+    ).rejects.toThrow(/redraft/i);
+    await expect(fs.readFile(activeSkillFile, "utf8")).resolves.toContain(
+      `description: ${JSON.stringify(liveDescription)}`,
     );
   });
 });
