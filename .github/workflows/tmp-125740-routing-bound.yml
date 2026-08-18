@@ -1,0 +1,32 @@
+name: Temporary 125740 routing-bound verifier
+
+on:
+  push:
+    branches:
+      - fix/125740-routing-bound-v2
+
+permissions:
+  contents: read
+
+jobs:
+  mechanical-diff:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-deps: 'true'
+          frozen-lockfile: 'true'
+          dependency-cache: 'false'
+          use-actions-cache: 'true'
+      - name: Generate Swift protocol and format touched files
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm protocol:gen:swift
+          pnpm exec oxfmt src/commands/doctor-skill-workshop-routing-provenance.test.ts src/commands/doctor-skill-workshop-sqlite.ts
+          git diff -- apps/shared/OpenClawKit/Sources/OpenClawProtocol/GatewayModels.swift src/commands/doctor-skill-workshop-routing-provenance.test.ts src/commands/doctor-skill-workshop-sqlite.ts
