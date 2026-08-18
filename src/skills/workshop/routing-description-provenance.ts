@@ -1,6 +1,6 @@
 import type { SkillProposalRecord } from "./types.js";
 
-export const LEGACY_UPDATE_REDRAFT_MESSAGE =
+const LEGACY_UPDATE_REDRAFT_MESSAGE =
   "This pending skill update predates routing-description provenance. Redraft the update before revising or applying it.";
 
 /**
