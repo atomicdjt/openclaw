@@ -15,6 +15,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Apply candidate provenance repair
+        run: |
+          git apply --check .github/125570-green.patch
+          git apply .github/125570-green.patch
+          git diff --check
       - name: Setup Node environment
         uses: ./.github/actions/setup-node-env
         with:
