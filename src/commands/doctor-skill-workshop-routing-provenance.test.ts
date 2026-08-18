@@ -8,13 +8,13 @@ import {
   listSkillProposals,
   reviseSkillProposal,
 } from "../skills/workshop/service.js";
+import { writeSkillProposalRollback } from "../skills/workshop/store-sqlite-rollback.js";
 import {
   hashSkillProposalContent,
   readSkillProposalRecord,
   readSkillProposalRollback,
   writeSkillProposal,
 } from "../skills/workshop/store.js";
-import { writeSkillProposalRollback } from "../skills/workshop/store-sqlite-rollback.js";
 import {
   SKILL_WORKSHOP_ROLLBACK_SCHEMA,
   SKILL_WORKSHOP_SCHEMA,
@@ -107,12 +107,7 @@ describe("doctor Skill Workshop routing provenance migration", () => {
   it("marks legacy pending update proposals stale and requires a redraft", async () => {
     const workspaceDir = await tempDirs.make("openclaw-workshop-legacy-routing-");
     const proposalId = "legacy-routing-update-20260818-1234567890";
-    const proposalDir = path.join(
-      testState.stateDir,
-      "skill-workshop",
-      "proposals",
-      proposalId,
-    );
+    const proposalDir = path.join(testState.stateDir, "skill-workshop", "proposals", proposalId);
     const targetDir = path.join(workspaceDir, "skills", "legacy-routing-update");
     const now = "2026-08-18T00:00:00.000Z";
     const content = renderProposalMarkdown({
@@ -130,11 +125,7 @@ describe("doctor Skill Workshop routing provenance migration", () => {
     });
 
     await fs.mkdir(proposalDir, { recursive: true });
-    await fs.writeFile(
-      path.join(proposalDir, "proposal.json"),
-      JSON.stringify(record),
-      "utf8",
-    );
+    await fs.writeFile(path.join(proposalDir, "proposal.json"), JSON.stringify(record), "utf8");
     await fs.writeFile(path.join(proposalDir, "PROPOSAL.md"), content, "utf8");
 
     await expect(
@@ -170,20 +161,15 @@ describe("doctor Skill Workshop routing provenance migration", () => {
         content: "# Legacy Routing Update\n\nAttempted revision.\n",
       }),
     ).rejects.toThrow("Current status: stale");
-    await expect(
-      applySkillProposal({ workspaceDir, agentId: "main", proposalId }),
-    ).rejects.toThrow("Current status: stale");
+    await expect(applySkillProposal({ workspaceDir, agentId: "main", proposalId })).rejects.toThrow(
+      "Current status: stale",
+    );
   });
 
   it("reconciles an interrupted legacy update before marking it stale", async () => {
     const workspaceDir = await tempDirs.make("openclaw-workshop-legacy-routing-recovery-");
     const proposalId = "legacy-routing-recovery-20260818-1234567890";
-    const proposalDir = path.join(
-      testState.stateDir,
-      "skill-workshop",
-      "proposals",
-      proposalId,
-    );
+    const proposalDir = path.join(testState.stateDir, "skill-workshop", "proposals", proposalId);
     const targetDir = path.join(workspaceDir, "skills", "legacy-routing-recovery");
     const targetSkillFile = path.join(targetDir, "SKILL.md");
     const now = "2026-08-18T00:00:00.000Z";
@@ -216,17 +202,9 @@ describe("doctor Skill Workshop routing provenance migration", () => {
     await fs.mkdir(proposalDir, { recursive: true });
     await fs.mkdir(targetDir, { recursive: true });
     await fs.writeFile(targetSkillFile, previousContent, "utf8");
-    await fs.writeFile(
-      path.join(proposalDir, "proposal.json"),
-      JSON.stringify(record),
-      "utf8",
-    );
+    await fs.writeFile(path.join(proposalDir, "proposal.json"), JSON.stringify(record), "utf8");
     await fs.writeFile(path.join(proposalDir, "PROPOSAL.md"), content, "utf8");
-    await fs.writeFile(
-      path.join(proposalDir, "rollback.json"),
-      JSON.stringify(rollback),
-      "utf8",
-    );
+    await fs.writeFile(path.join(proposalDir, "rollback.json"), JSON.stringify(rollback), "utf8");
 
     await expect(
       migrateLegacySkillWorkshopProposals({ config: doctorConfig(workspaceDir) }),
@@ -367,9 +345,9 @@ describe("doctor Skill Workshop routing provenance migration", () => {
       store: { env: testState.env },
     });
 
-    await expect(readSkillProposalRollback(proposalId, { env: testState.env })).resolves.toMatchObject(
-      rollback,
-    );
+    await expect(
+      readSkillProposalRollback(proposalId, { env: testState.env }),
+    ).resolves.toMatchObject(rollback);
 
     await expect(
       migrateLegacySkillWorkshopProposals({

@@ -55,6 +55,25 @@ export type ResolvedSkillsWorkspace = Extract<
 
 export const SKILL_PROPOSAL_RESPONSE_HANDLED = Symbol("skill proposal response handled");
 
+function projectSkillProposalGatewayResult(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(projectSkillProposalGatewayResult);
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  // SAFETY: the guards above establish that value is a non-null object before record access.
+  const record = value as Record<string, unknown>;
+  const projected = Object.fromEntries(
+    Object.entries(record).map(([key, entry]) => [key, projectSkillProposalGatewayResult(entry)]),
+  );
+  if (record.schema === "openclaw.skill-workshop.proposal.v1") {
+    delete projected.routingDescription;
+  }
+  return projected;
+}
+
 export async function runSkillsProposalWorkspaceHandler<TParams, TResult>(params: {
   method: string;
   rawParams: unknown;
@@ -77,7 +96,7 @@ export async function runSkillsProposalWorkspaceHandler<TParams, TResult>(params
   try {
     const result = await params.run(params.rawParams, resolved);
     if (result !== SKILL_PROPOSAL_RESPONSE_HANDLED) {
-      params.respond(true, result, undefined);
+      params.respond(true, projectSkillProposalGatewayResult(result), undefined);
     }
   } catch (error) {
     params.respond(
