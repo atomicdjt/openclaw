@@ -1,0 +1,25 @@
+name: 125570 Legacy TDD
+
+on:
+  push:
+    branches:
+      - fix/125570-legacy-tdd
+
+permissions:
+  contents: read
+
+jobs:
+  focused-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-deps: "true"
+          frozen-lockfile: "true"
+          dependency-cache: "false"
+          use-actions-cache: "true"
+      - name: Run description-boundary regression
+        run: pnpm test src/skills/workshop/service-description-boundary.test.ts
