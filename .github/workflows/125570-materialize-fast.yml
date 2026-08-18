@@ -1,0 +1,75 @@
+name: 125570 Fast Materializer
+
+on:
+  push:
+    branches:
+      - fix/125570-materialize-fast
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout contribution branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/125570-preserve-skill-description
+          fetch-depth: 1
+      - name: Bring in verified legacy regression
+        run: |
+          git fetch --no-tags --depth=1 origin fix/125570-legacy-tdd:refs/remotes/origin/fix/125570-legacy-tdd
+          git show origin/fix/125570-legacy-tdd:src/skills/workshop/service-description-boundary.test.ts > src/skills/workshop/service-description-boundary.test.ts
+      - name: Materialize tested repair
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text()
+              if text.count(old) != 1:
+                  raise SystemExit(f"expected exactly one match in {path}: {old!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          replace_once("src/skills/workshop/types.ts", "  title: string;\n  description: string;\n  createdAt: string;", "  title: string;\n  description: string;\n  /** Canonical routing description intended for the live skill after an update. */\n  routingDescription?: string;\n  createdAt: string;")
+          replace_once("src/skills/workshop/store-record.ts", "    title: z.string(),\n    description: z.string(),\n    createdAt: z.string(),", "    title: z.string(),\n    description: z.string(),\n    routingDescription: z.string().optional(),\n    createdAt: z.string(),")
+          Path("src/skills/workshop/routing-description-provenance.ts").write_text('''import type { SkillProposalRecord } from "./types.js";\n\nexport const LEGACY_UPDATE_REDRAFT_MESSAGE =\n  "This pending skill update predates routing-description provenance. Redraft the update before revising or applying it.";\n\n/**\n * Returns the canonical routing description for an update proposal.\n * Legacy pending updates intentionally fail closed because their stored\n * description cannot distinguish routing metadata from proposal summary text.\n */\nexport function requireUpdateRoutingDescription(\n  record: Pick<SkillProposalRecord, "kind" | "routingDescription">,\n): string | undefined {\n  if (record.kind !== "update") return undefined;\n  if (record.routingDescription === undefined) throw new Error(LEGACY_UPDATE_REDRAFT_MESSAGE);\n  return record.routingDescription;\n}\n''')
+          replace_once("src/skills/workshop/service.ts", '} from "./proposal-draft.js";\nimport { hashSkillProposalRevision } from "./revision-hash.js";', '} from "./proposal-draft.js";\nimport { requireUpdateRoutingDescription } from "./routing-description-provenance.js";\nimport { hashSkillProposalRevision } from "./revision-hash.js";')
+          replace_once("src/skills/workshop/service.ts", '    title: `Update ${targetSkill.name}`,\n    description,\n    createdAt: now,', '    title: `Update ${targetSkill.name}`,\n    description,\n    routingDescription: skillDescription,\n    createdAt: now,')
+          replace_once("src/skills/workshop/service.ts", '    const { record } = read;\n    assertInsideWorkspace(input.workspaceDir, record.target.skillFile, "skill file");', '    const { record } = read;\n    const existingRoutingDescription = requireUpdateRoutingDescription(record);\n    assertInsideWorkspace(input.workspaceDir, record.target.skillFile, "skill file");')
+          replace_once("src/skills/workshop/service.ts", '''    const skillDescription =\n      record.kind === "update"\n        ? (normalizeOptionalString(parseSkillFrontmatter(requestedContent).description) ??\n          normalizeOptionalString(parseSkillFrontmatter(read.content).description))\n        : undefined;''', '''    const skillDescription =\n      record.kind === "update"\n        ? (input.content === undefined\n            ? existingRoutingDescription\n            : (normalizeOptionalString(parseSkillFrontmatter(input.content).description) ??\n              existingRoutingDescription))\n        : undefined;''')
+          replace_once("src/skills/workshop/service.ts", '      ...record,\n      description,\n      updatedAt: now,', '      ...record,\n      description,\n      ...(record.kind === "update" ? { routingDescription: skillDescription! } : {}),\n      updatedAt: now,')
+          replace_once("src/skills/workshop/apply-transition.ts", 'import { hashSkillProposalRevision } from "./revision-hash.js";\nimport type { NewSkillProposalEvent } from "./store-sqlite-event.js";', 'import { hashSkillProposalRevision } from "./revision-hash.js";\nimport { requireUpdateRoutingDescription } from "./routing-description-provenance.js";\nimport type { NewSkillProposalEvent } from "./store-sqlite-event.js";')
+          replace_once("src/skills/workshop/apply-transition.ts", '  }\n  dependencies.assertExpectedRevisionHash(initial.revisionHash, input.expectedRevisionHash);', '  }\n  requireUpdateRoutingDescription(initial.record);\n  dependencies.assertExpectedRevisionHash(initial.revisionHash, input.expectedRevisionHash);')
+          replace_once("src/skills/workshop/apply-transition.ts", '      }\n      dependencies.assertExpectedRevisionHash(read.revisionHash, evaluated.evaluation.revisionHash);', '      }\n      requireUpdateRoutingDescription(record);\n      dependencies.assertExpectedRevisionHash(read.revisionHash, evaluated.evaluation.revisionHash);')
+          replace_once("src/skills/workshop/service-description-boundary.test.ts", '    expect(proposal.record.description).toBe(proposalSummary);\n    expect(proposal.content)', '    expect(proposal.record.description).toBe(proposalSummary);\n    expect(proposal.record.routingDescription).toBe(liveDescription);\n    expect(proposal.content)')
+          replace_once("src/skills/workshop/service-description-boundary.test.ts", '    expect(revised.record.description).toBe(revisedSummary);\n    expect(revised.content)', '    expect(revised.record.description).toBe(revisedSummary);\n    expect(revised.record.routingDescription).toBe(liveDescription);\n    expect(revised.content)')
+          replace_once("src/skills/workshop/service-description-boundary.test.ts", '    expect(replacement.record.description).toBe(replacementSummary);\n    expect(replacement.content)', '    expect(replacement.record.description).toBe(replacementSummary);\n    expect(replacement.record.routingDescription).toBe(replacementDescription);\n    expect(replacement.content)')
+      - name: Commit and push only intended files
+        run: |
+          git diff --check
+          actual="$(git status --porcelain | sed 's/^...//' | sort)"
+          expected="$(printf '%s\n' \
+            src/skills/workshop/apply-transition.ts \
+            src/skills/workshop/routing-description-provenance.ts \
+            src/skills/workshop/service-description-boundary.test.ts \
+            src/skills/workshop/service.ts \
+            src/skills/workshop/store-record.ts \
+            src/skills/workshop/types.ts | sort)"
+          printf 'Changed files:\n%s\n' "$actual"
+          test "$actual" = "$expected"
+          git config user.name atomicdjt
+          git config user.email 254662250+atomicdjt@users.noreply.github.com
+          git add \
+            src/skills/workshop/types.ts \
+            src/skills/workshop/store-record.ts \
+            src/skills/workshop/routing-description-provenance.ts \
+            src/skills/workshop/service.ts \
+            src/skills/workshop/apply-transition.ts \
+            src/skills/workshop/service-description-boundary.test.ts
+          git diff --cached --check
+          git commit -m "fix(skills): safeguard legacy pending updates"
+          git push origin HEAD:fix/125570-preserve-skill-description
