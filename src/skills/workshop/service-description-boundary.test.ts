@@ -6,6 +6,7 @@ import {
   type OpenClawTestState,
 } from "../../test-utils/openclaw-test-state.js";
 import { createTrackedTempDirs } from "../../test-utils/tracked-temp-dirs.js";
+import { parseSkillFrontmatter } from "../loading/frontmatter.js";
 import { writeSkill } from "../test-support/e2e-test-helpers.js";
 import {
   applySkillProposal,
@@ -192,8 +193,7 @@ Final behavior.
         proposalId: proposal.record.id,
       }),
     ).rejects.toThrow(/redraft/i);
-    await expect(fs.readFile(activeSkillFile, "utf8")).resolves.toContain(
-      `description: ${JSON.stringify(liveDescription)}`,
-    );
+    const unchangedSkill = await fs.readFile(activeSkillFile, "utf8");
+    expect(parseSkillFrontmatter(unchangedSkill).description).toBe(liveDescription);
   });
 });
