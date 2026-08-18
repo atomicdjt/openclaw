@@ -1,0 +1,320 @@
+name: Temporary 125570 P1 TDD
+
+on:
+  push:
+    branches:
+      - tmp/125570-finalize
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: atomicdjt/openclaw
+          ref: fe2800a9de9d237f5258cbf950a866a2724a61b7
+          fetch-depth: 100
+
+      - uses: ./.github/actions/setup-node-env
+        with:
+          install-deps: true
+          frozen-lockfile: true
+          dependency-cache: false
+
+      - name: Add regression tests only
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          protocol = Path('packages/gateway-protocol/src/schema/agents-models-skills-routing-description.test.ts')
+          protocol.write_text('''import { Value } from "typebox/value";\nimport { describe, expect, it } from "vitest";\nimport { SkillsProposalInspectResultSchema } from "./agents-models-skills.js";\n\ndescribe("Skill Workshop routing description protocol", () => {\n  it("keeps internal routingDescription out of public returned proposal records", () => {\n    const record = {\n      schema: "openclaw.skill-workshop.proposal.v1",\n      id: "proposal-routing-1",\n      kind: "update",\n      status: "pending",\n      title: "Update cron guard",\n      description: "Correct dead-man secret storage path",\n      routingDescription:\n        "Route cron-guard for cron safety, dry-run planning, alerts, digest review, rollback, and recovery workflows.",\n      createdAt: "2026-08-18T00:00:00.000Z",\n      updatedAt: "2026-08-18T00:00:00.000Z",\n      createdBy: "gateway",\n      proposedVersion: "v1",\n      draftFile: "PROPOSAL.md",\n      draftHash: "a".repeat(64),\n      target: {\n        skillName: "cron-guard",\n        skillKey: "cron-guard",\n        skillDir: "/tmp/workspace/skills/cron-guard",\n        skillFile: "/tmp/workspace/skills/cron-guard/SKILL.md",\n      },\n      scan: {\n        state: "clean",\n        scannedAt: "2026-08-18T00:00:00.000Z",\n        critical: 0,\n        warn: 0,\n        info: 0,\n        findings: [],\n      },\n    };\n\n    expect(\n      Value.Check(SkillsProposalInspectResultSchema, {\n        record,\n        revisionHash: "b".repeat(64),\n        content: "# Cron Guard\\n",\n      }),\n    ).toBe(false);\n  });\n});\n''')
+
+          service_test = Path('src/skills/workshop/service-description-boundary.test.ts')
+          text = service_test.read_text()
+          import_anchor = 'import { createTrackedTempDirs } from "../../test-utils/tracked-temp-dirs.js";\n'
+          if 'createSkillWorkshopTool' not in text:
+              text = text.replace(
+                  import_anchor,
+                  import_anchor + 'import { createSkillWorkshopTool } from "../../agents/tools/skill-workshop-tool.js";\n',
+                  1,
+              )
+          test_block = r'''
+
+  it("bounds model inspection without truncating the authoritative routing description", async () => {
+    const workspaceDir = await tempDirs.make("openclaw-skill-description-inspect-boundary-");
+    const activeSkillFile = await createOwnedSkill({
+      workspaceDir,
+      name: "inspect-boundary",
+      description: "Initial routing description.",
+      body: "# Inspect Boundary\n\nExisting behavior.\n",
+    });
+    const longRoutingDescription =
+      "Route inspect-boundary for durable review and recovery workflows. " + "x".repeat(24_000);
+    await writeSkill({
+      dir: path.dirname(activeSkillFile),
+      name: "inspect-boundary",
+      description: longRoutingDescription,
+      body: "# Inspect Boundary\n\nExisting behavior.\n",
+    });
+
+    const proposal = await proposeUpdateSkill({
+      workspaceDir,
+      env: testState.env,
+      skillName: "inspect-boundary",
+      description: "Update the skill body without changing routing.",
+      content: "# Inspect Boundary\n\nUpdated behavior.\n",
+    });
+    expect(proposal.record.routingDescription).toBe(longRoutingDescription);
+
+    const tool = createSkillWorkshopTool({ workspaceDir, env: testState.env });
+    const inspected = await tool.execute("inspect-long-routing", {
+      action: "inspect",
+      proposal_id: proposal.record.id,
+    });
+    const inspectionText = (inspected.content[0] as { text: string }).text;
+    expect(inspectionText.length).toBeLessThanOrEqual(20_000);
+    expect(inspectionText).toContain(
+      "[truncated: proposal inspect exceeds the model projection limit]",
+    );
+
+    await applySkillProposal({
+      workspaceDir,
+      env: testState.env,
+      proposalId: proposal.record.id,
+      expectedRevisionHash: proposal.revisionHash,
+    });
+    const applied = await fs.readFile(activeSkillFile, "utf8");
+    expect(parseSkillFrontmatter(applied).description).toBe(longRoutingDescription);
+  });
+'''
+          if 'bounds model inspection without truncating the authoritative routing description' not in text:
+              marker = '\n});\n'
+              head, sep, tail = text.rpartition(marker)
+              if not sep:
+                  raise SystemExit('service-description-boundary describe terminator not found')
+              text = head + test_block + marker + tail
+          service_test.write_text(text)
+
+          gateway_test = Path('src/gateway/server-methods/skills.proposals.test.ts')
+          text = gateway_test.read_text()
+          test_block = r'''
+
+  it("keeps update routing provenance internal to Gateway proposal responses", async () => {
+    const create = await callHandler("skills.proposals.create", {
+      name: "Routing Boundary",
+      description: "Initial routing description",
+      content: "# Routing Boundary\n\nExisting behavior.\n",
+    });
+    expect(create.ok).toBe(true);
+    const created = create.response as {
+      record: { id: string; target: { skillFile: string } };
+    };
+    const initialApply = await callHandler("skills.proposals.apply", {
+      proposalId: created.record.id,
+    });
+    expect(initialApply.ok).toBe(true);
+
+    const liveRoutingDescription =
+      "Route routing-boundary for durable scheduling, diagnostics, rollback, and recovery workflows. " +
+      "x".repeat(400);
+    const current = await fs.readFile(created.record.target.skillFile, "utf8");
+    const rewritten = current.replace(
+      /^description:.*$/m,
+      `description: ${JSON.stringify(liveRoutingDescription)}`,
+    );
+    expect(rewritten).not.toBe(current);
+    await fs.writeFile(created.record.target.skillFile, rewritten, "utf8");
+
+    const update = await callHandler("skills.proposals.update", {
+      skillName: "routing-boundary",
+      description: "Update the implementation body.",
+      content: "# Routing Boundary\n\nUpdated behavior.\n",
+    });
+    expect(update.ok).toBe(true);
+    const updated = update.response as { record: Record<string, unknown> & { id: string } };
+    expect(updated.record).not.toHaveProperty("routingDescription");
+
+    const inspect = await callHandler("skills.proposals.inspect", {
+      proposalId: updated.record.id,
+    });
+    expect(inspect.ok).toBe(true);
+    expect((inspect.response as { record: Record<string, unknown> }).record).not.toHaveProperty(
+      "routingDescription",
+    );
+
+    const apply = await callHandler("skills.proposals.apply", {
+      proposalId: updated.record.id,
+    });
+    expect(apply.ok).toBe(true);
+    await expect(fs.readFile(created.record.target.skillFile, "utf8")).resolves.toContain(
+      `description: ${JSON.stringify(liveRoutingDescription)}`,
+    );
+  });
+'''
+          if 'keeps update routing provenance internal to Gateway proposal responses' not in text:
+              marker = '\n});\n'
+              head, sep, tail = text.rpartition(marker)
+              if not sep:
+                  raise SystemExit('skills.proposals describe terminator not found')
+              text = head + test_block + marker + tail
+          gateway_test.write_text(text)
+          PY
+
+      - name: Verify RED on reviewed head
+        shell: bash
+        run: |
+          set +e
+          node scripts/run-vitest.mjs \
+            packages/gateway-protocol/src/schema/agents-models-skills-routing-description.test.ts \
+            src/gateway/server-methods/skills.proposals.test.ts \
+            src/skills/workshop/service-description-boundary.test.ts \
+            2>&1 | tee /tmp/red.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -eq 0 ]; then
+            echo "Expected new regressions to fail on the reviewed head, but they passed." >&2
+            exit 1
+          fi
+          grep -Eq "routingDescription|proposal inspect exceeds|20000|toBe\(false\)" /tmp/red.log || {
+            echo "RED run failed for an unexpected reason." >&2
+            exit 1
+          }
+          echo "Observed expected RED state before production repair."
+
+      - name: Apply minimal production repair
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          schema = Path('packages/gateway-protocol/src/schema/agents-models-skills.ts')
+          text = schema.read_text()
+          line = '  routingDescription: Type.Optional(Type.String()),\n'
+          if line not in text:
+              raise SystemExit('routingDescription schema field not found')
+          schema.write_text(text.replace(line, '', 1))
+
+          handler = Path('src/gateway/server-methods/skills-workspace-handler.ts')
+          text = handler.read_text()
+          type_anchor = 'export const SKILL_PROPOSAL_RESPONSE_HANDLED = Symbol("skill proposal response handled");\n'
+          helper = '''export const SKILL_PROPOSAL_RESPONSE_HANDLED = Symbol("skill proposal response handled");\n\nconst SKILL_PROPOSAL_RECORD_SCHEMA = "openclaw.skill-workshop.proposal.v1";\n\nfunction isSkillProposalRecord(value: unknown): value is Record<string, unknown> {\n  return (\n    value !== null &&\n    typeof value === "object" &&\n    !Array.isArray(value) &&\n    (value as Record<string, unknown>).schema === SKILL_PROPOSAL_RECORD_SCHEMA\n  );\n}\n\nfunction projectSkillProposalRecord(record: Record<string, unknown>): Record<string, unknown> {\n  const projected = { ...record };\n  delete projected.routingDescription;\n  return projected;\n}\n\nexport function projectSkillProposalGatewayResult<T>(result: T): T {\n  if (isSkillProposalRecord(result)) {\n    return projectSkillProposalRecord(result) as T;\n  }\n  if (result === null || typeof result !== "object" || Array.isArray(result)) {\n    return result;\n  }\n  const object = result as Record<string, unknown>;\n  if (!isSkillProposalRecord(object.record)) {\n    return result;\n  }\n  return { ...object, record: projectSkillProposalRecord(object.record) } as T;\n}\n'''
+          if 'projectSkillProposalGatewayResult' not in text:
+              if type_anchor not in text:
+                  raise SystemExit('workspace handler projection anchor not found')
+              text = text.replace(type_anchor, helper, 1)
+          respond_anchor = '      params.respond(true, result, undefined);\n'
+          replacement = '      params.respond(true, projectSkillProposalGatewayResult(result), undefined);\n'
+          if replacement not in text:
+              if respond_anchor not in text:
+                  raise SystemExit('workspace handler respond anchor not found')
+              text = text.replace(respond_anchor, replacement, 1)
+          handler.write_text(text)
+
+          presentation = Path('src/agents/tools/skill-workshop-tool-presentation.ts')
+          text = presentation.read_text()
+          constants_anchor = '''const EVALUATION_TRUNCATION_MARKER =\n  "\\n[truncated: evaluator details exceed the model projection limit]";\n'''
+          constants = '''const EVALUATION_TRUNCATION_MARKER =\n  "\\n[truncated: evaluator details exceed the model projection limit]";\nconst SKILL_PROPOSAL_INSPECT_MAX_CHARS = 20_000;\nconst INSPECT_TRUNCATION_MARKER =\n  "\\n[truncated: proposal inspect exceeds the model projection limit]";\n'''
+          if 'SKILL_PROPOSAL_INSPECT_MAX_CHARS' not in text:
+              if constants_anchor not in text:
+                  raise SystemExit('presentation constants anchor not found')
+              text = text.replace(constants_anchor, constants, 1)
+          old_return = '''  return [\n    `Proposal: ${proposal.record.id}`,\n    `Status: ${proposal.record.status}`,\n    `Kind: ${proposal.record.kind}`,\n    `Skill: ${proposal.record.target.skillKey}`,\n    `Version: ${proposal.record.proposedVersion}`,\n    `Scan: ${proposal.record.scan.state}`,\n    ...evaluationLines,\n    "",\n    proposal.content,\n    ...supportFiles,\n  ].join("\\n");\n'''
+          new_return = '''  const text = [\n    `Proposal: ${proposal.record.id}`,\n    `Status: ${proposal.record.status}`,\n    `Kind: ${proposal.record.kind}`,\n    `Skill: ${proposal.record.target.skillKey}`,\n    `Version: ${proposal.record.proposedVersion}`,\n    `Scan: ${proposal.record.scan.state}`,\n    ...evaluationLines,\n    "",\n    proposal.content,\n    ...supportFiles,\n  ].join("\\n");\n  return text.length > SKILL_PROPOSAL_INSPECT_MAX_CHARS\n    ? `${truncateUtf16Safe(\n        text,\n        SKILL_PROPOSAL_INSPECT_MAX_CHARS - INSPECT_TRUNCATION_MARKER.length,\n      )}${INSPECT_TRUNCATION_MARKER}`\n    : text;\n'''
+          if new_return not in text:
+              if old_return not in text:
+                  raise SystemExit('presentation inspect return anchor not found')
+              text = text.replace(old_return, new_return, 1)
+          presentation.write_text(text)
+          PY
+
+          pnpm exec oxfmt --write --threads=1 \
+            packages/gateway-protocol/src/schema/agents-models-skills-routing-description.test.ts \
+            packages/gateway-protocol/src/schema/agents-models-skills.ts \
+            src/gateway/server-methods/skills-workspace-handler.ts \
+            src/gateway/server-methods/skills.proposals.test.ts \
+            src/agents/tools/skill-workshop-tool-presentation.ts \
+            src/skills/workshop/service-description-boundary.test.ts \
+            src/commands/doctor-skill-workshop-routing-provenance.test.ts \
+            src/commands/doctor-skill-workshop-sqlite.ts
+
+      - name: Verify GREEN focused behavior
+        run: >-
+          node scripts/run-vitest.mjs
+          packages/gateway-protocol/src/schema/agents-models-skills-routing-description.test.ts
+          packages/gateway-protocol/src/schema/agents-models-skills.test.ts
+          src/gateway/server-methods/skills.proposals.test.ts
+          src/skills/workshop/service-description-boundary.test.ts
+          src/commands/doctor-skill-workshop-routing-provenance.test.ts
+          src/commands/doctor-skill-workshop-sqlite.test.ts
+
+      - name: Verify protocol, dependency, lint, and format contracts
+        run: |
+          pnpm protocol:check
+          pnpm deadcode:dependencies
+          pnpm exec oxlint \
+            packages/gateway-protocol/src/schema/agents-models-skills-routing-description.test.ts \
+            packages/gateway-protocol/src/schema/agents-models-skills.ts \
+            src/gateway/server-methods/skills-workspace-handler.ts \
+            src/gateway/server-methods/skills.proposals.test.ts \
+            src/agents/tools/skill-workshop-tool-presentation.ts \
+            src/skills/workshop/service-description-boundary.test.ts \
+            src/commands/doctor-skill-workshop-routing-provenance.test.ts \
+            src/commands/doctor-skill-workshop-sqlite.ts \
+            src/skills/workshop/apply-transition.ts \
+            src/skills/workshop/proposal-draft.ts \
+            src/skills/workshop/routing-description-provenance.ts \
+            src/skills/workshop/service-propose.ts \
+            src/skills/workshop/service.ts \
+            src/skills/workshop/store-record.ts \
+            src/skills/workshop/store-sqlite-record.ts \
+            src/skills/workshop/types.ts
+          pnpm format:check
+
+      - name: Assert repair diff surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          unexpected=0
+          while IFS= read -r path; do
+            case "$path" in
+              packages/gateway-protocol/src/schema/agents-models-skills-routing-description.test.ts|\
+              packages/gateway-protocol/src/schema/agents-models-skills.ts|\
+              src/gateway/server-methods/skills-workspace-handler.ts|\
+              src/gateway/server-methods/skills.proposals.test.ts|\
+              src/agents/tools/skill-workshop-tool-presentation.ts|\
+              src/skills/workshop/service-description-boundary.test.ts|\
+              src/commands/doctor-skill-workshop-routing-provenance.test.ts|\
+              src/commands/doctor-skill-workshop-sqlite.ts)
+                ;;
+              *)
+                echo "Unexpected repair change: $path" >&2
+                unexpected=1
+                ;;
+            esac
+          done < <(git diff --name-only)
+          test "$unexpected" -eq 0
+
+      - name: Publish verified scratch head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "David Turner"
+          git config user.email "davidelsey9513@gmail.com"
+          git checkout -B tmp/125570-p1-green
+          git add \
+            packages/gateway-protocol/src/schema/agents-models-skills-routing-description.test.ts \
+            packages/gateway-protocol/src/schema/agents-models-skills.ts \
+            src/gateway/server-methods/skills-workspace-handler.ts \
+            src/gateway/server-methods/skills.proposals.test.ts \
+            src/agents/tools/skill-workshop-tool-presentation.ts \
+            src/skills/workshop/service-description-boundary.test.ts \
+            src/commands/doctor-skill-workshop-routing-provenance.test.ts \
+            src/commands/doctor-skill-workshop-sqlite.ts
+          git diff --cached --check
+          git commit -m "fix(skills): bound workshop routing projections"
+          git push --force origin HEAD:tmp/125570-p1-green
