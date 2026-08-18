@@ -12,7 +12,7 @@ permissions:
 jobs:
   focused-test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - name: Apply candidate provenance repair
@@ -102,5 +102,114 @@ jobs:
           frozen-lockfile: "true"
           dependency-cache: "false"
           use-actions-cache: "true"
-      - name: Run description-boundary regression
-        run: pnpm test src/skills/workshop/service-description-boundary.test.ts
+      - name: Run reviewer acceptance tests
+        run: >-
+          pnpm test
+          src/skills/workshop/service-description-boundary.test.ts
+          src/skills/workshop/service.test.ts
+          src/agents/tools/skill-workshop-tool.test.ts
+      - name: Run after-fix workspace behavior proof
+        run: |
+          node --import tsx --input-type=module <<'PROOF'
+          import fs from "node:fs/promises";
+          import os from "node:os";
+          import path from "node:path";
+          import { createOpenClawTestState } from "./src/test-utils/openclaw-test-state.ts";
+          import { parseSkillFrontmatter } from "./src/skills/loading/frontmatter.ts";
+          import { writeSkill } from "./src/skills/test-support/e2e-test-helpers.ts";
+          import {
+            applySkillProposal,
+            proposeUpdateSkill,
+            reviseSkillProposal,
+          } from "./src/skills/workshop/service.ts";
+          import { hashSkillProposalContent, replaceSkillProposalDraft } from "./src/skills/workshop/store.ts";
+
+          const state = await createOpenClawTestState({
+            layout: "state-only",
+            prefix: "openclaw-125570-proof-state-",
+          });
+          const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-125570-proof-workspace-"));
+          const liveDescription =
+            "Route cron-guard for cron safety, dry-run planning, alerts, digest review, rollback, and recovery workflows.";
+          const proposalSummary = "Correct dead-man secret storage path.";
+          try {
+            const skillDir = path.join(workspaceDir, "skills", "cron-guard");
+            await writeSkill({
+              dir: skillDir,
+              name: "cron-guard",
+              description: liveDescription,
+              body: "# Cron Guard\n\nExisting behavior.\n",
+            });
+            const proposal = await proposeUpdateSkill({
+              workspaceDir,
+              skillName: "cron-guard",
+              description: proposalSummary,
+              content: "# Cron Guard\n\nUpdated behavior.\n",
+            });
+            console.log(`PROPOSAL_SUMMARY=${proposal.record.description}`);
+            console.log(`PROPOSAL_ROUTING=${proposal.record.routingDescription}`);
+            if (proposal.record.description !== proposalSummary) throw new Error("proposal summary mismatch");
+            if (proposal.record.routingDescription !== liveDescription) throw new Error("routing provenance mismatch");
+
+            const revised = await reviseSkillProposal({
+              workspaceDir,
+              proposalId: proposal.record.id,
+              expectedRevisionHash: proposal.revisionHash,
+              description: "Document the storage correction.",
+            });
+            if (revised.record.routingDescription !== liveDescription) throw new Error("revision changed routing provenance");
+            await applySkillProposal({
+              workspaceDir,
+              proposalId: revised.record.id,
+              expectedRevisionHash: revised.revisionHash,
+            });
+            const liveFile = await fs.readFile(path.join(skillDir, "SKILL.md"), "utf8");
+            const appliedDescription = parseSkillFrontmatter(liveFile).description;
+            console.log(`APPLIED_ROUTING=${appliedDescription}`);
+            if (appliedDescription !== liveDescription) throw new Error("applied routing description changed");
+
+            const legacyDir = path.join(workspaceDir, "skills", "legacy-guard");
+            const legacyDescription = "Route legacy-guard for durable scheduling and recovery workflows.";
+            const legacySummary = "Adjust one legacy behavior.";
+            await writeSkill({
+              dir: legacyDir,
+              name: "legacy-guard",
+              description: legacyDescription,
+              body: "# Legacy Guard\n\nExisting behavior.\n",
+            });
+            const safeLegacy = await proposeUpdateSkill({
+              workspaceDir,
+              skillName: "legacy-guard",
+              description: legacySummary,
+              content: "# Legacy Guard\n\nUpdated behavior.\n",
+            });
+            const legacyContent = safeLegacy.content.replace(
+              `description: ${JSON.stringify(legacyDescription)}`,
+              `description: ${JSON.stringify(legacySummary)}`,
+            );
+            if (legacyContent === safeLegacy.content) throw new Error("failed to construct legacy fixture");
+            const legacyRecord = {
+              ...safeLegacy.record,
+              draftHash: hashSkillProposalContent(legacyContent),
+            };
+            delete legacyRecord.routingDescription;
+            await replaceSkillProposalDraft({ record: legacyRecord, content: legacyContent });
+            let blockedMessage = "";
+            try {
+              await applySkillProposal({ workspaceDir, proposalId: safeLegacy.record.id });
+              throw new Error("legacy pending update unexpectedly applied");
+            } catch (error) {
+              blockedMessage = error instanceof Error ? error.message : String(error);
+              if (!/redraft/i.test(blockedMessage)) throw error;
+            }
+            const unchangedLegacy = await fs.readFile(path.join(legacyDir, "SKILL.md"), "utf8");
+            if (parseSkillFrontmatter(unchangedLegacy).description !== legacyDescription) {
+              throw new Error("legacy apply changed live routing description");
+            }
+            console.log(`LEGACY_APPLY=BLOCKED_REDRAFT:${blockedMessage}`);
+            console.log("PROOF_PASS=summary-separated-routing-preserved-legacy-fails-closed");
+          } finally {
+            await fs.rm(workspaceDir, { recursive: true, force: true });
+            await state.cleanup();
+          }
+          PROOF
