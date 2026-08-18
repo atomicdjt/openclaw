@@ -1,0 +1,39 @@
+name: Temporary 125740 autoformat
+
+on:
+  push:
+    branches:
+      - fix/125740-routing-bound-v2
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-deps: 'true'
+          frozen-lockfile: 'true'
+          dependency-cache: 'false'
+          use-actions-cache: 'true'
+      - name: Format known failing files
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm exec oxfmt src/commands/doctor-skill-workshop-routing-provenance.test.ts src/commands/doctor-skill-workshop-sqlite.ts
+          if git diff --quiet -- src/commands/doctor-skill-workshop-routing-provenance.test.ts src/commands/doctor-skill-workshop-sqlite.ts; then
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/commands/doctor-skill-workshop-routing-provenance.test.ts src/commands/doctor-skill-workshop-sqlite.ts
+          git commit -m 'style: format routing provenance migration'
+          git push origin HEAD:fix/125740-routing-bound-v2
