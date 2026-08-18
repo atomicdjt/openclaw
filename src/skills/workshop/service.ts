@@ -7,7 +7,6 @@ import {
   readWorkspaceSkillFile,
   readWorkspaceSupportFile,
 } from "../lifecycle/workspace-skill-write.js";
-import { parseSkillFrontmatter } from "../loading/frontmatter.js";
 import {
   applySkillProposalTransition,
   assertSkillProposalSupportTargetUnchanged,
@@ -19,13 +18,9 @@ import {
 import { resolveSkillWorkshopConfig } from "./config.js";
 import { stripProposalFrontmatterForSkill } from "./frontmatter.js";
 import { createSkillProposalEvent, dispatchSkillProposalChanged } from "./plugin-hooks.js";
-import {
-  nextProposalVersion,
-  prepareSkillProposalDraft,
-  resolveUpdateProposalDescription,
-} from "./proposal-draft.js";
+import { nextProposalVersion, prepareSkillProposalDraft } from "./proposal-draft.js";
 import { hashSkillProposalRevision } from "./revision-hash.js";
-import { requireUpdateRoutingDescription } from "./routing-description-provenance.js";
+import { resolveForRevision, resolveForUpdate } from "./routing-description-provenance.js";
 import {
   assertExpectedRevisionHash,
   evaluateSkillProposal,
@@ -286,16 +281,12 @@ export async function proposeUpdateSkill(
   if (draftContent === undefined) {
     throw new Error("Update proposal requires content or composePatch.");
   }
-  const description = resolveUpdateProposalDescription(input.description, targetSkill.description);
-  const skillDescription =
-    normalizeOptionalString(parseSkillFrontmatter(draftContent).description) ??
-    targetSkill.description;
+  const descriptions = resolveForUpdate(input.description, draftContent, targetSkill.description);
 
   const now = new Date().toISOString();
   const prepared = prepareSkillProposalDraft({
     name: targetSkill.skillKey,
-    description,
-    skillDescription,
+    ...descriptions.draft,
     content: draftContent,
     fallbackFrontmatterContent: currentContent,
     date: now,
@@ -327,8 +318,7 @@ export async function proposeUpdateSkill(
     kind: "update",
     status: "pending",
     title: `Update ${targetSkill.name}`,
-    description,
-    routingDescription: skillDescription,
+    ...descriptions.record,
     createdAt: now,
     updatedAt: now,
     createdBy: input.createdBy ?? "skill-workshop",
@@ -393,7 +383,6 @@ export async function reviseSkillProposal(
   const config = resolveSkillWorkshopConfig(input.config);
   const revision = withPendingSkillProposalMutation(input, "revised", async (read) => {
     const { record } = read;
-    const existingRoutingDescription = requireUpdateRoutingDescription(record);
     assertInsideWorkspace(input.workspaceDir, record.target.skillFile, "skill file");
     assertInsideWorkspace(input.workspaceDir, record.target.skillDir, "skill directory");
 
@@ -432,19 +421,11 @@ export async function reviseSkillProposal(
         : input.supportFiles;
     const requestedContent = input.content ?? read.content;
     const nextVersion = nextProposalVersion(record.proposedVersion);
-    const description = normalizeOptionalString(input.description) ?? record.description;
-    const skillDescription =
-      record.kind === "update"
-        ? input.content === undefined
-          ? existingRoutingDescription
-          : (normalizeOptionalString(parseSkillFrontmatter(input.content).description) ??
-            existingRoutingDescription)
-        : undefined;
+    const descriptions = resolveForRevision(record, input.description, input.content);
     const now = new Date().toISOString();
     const prepared = prepareSkillProposalDraft({
       name: record.target.skillKey,
-      description,
-      ...(skillDescription ? { skillDescription } : {}),
+      ...descriptions.draft,
       content: requestedContent,
       fallbackFrontmatterContent: read.content,
       version: nextVersion,
@@ -477,8 +458,7 @@ export async function reviseSkillProposal(
     const previousSupportFiles = record.supportFiles;
     const revised: SkillProposalRecord = {
       ...record,
-      description,
-      ...(record.kind === "update" ? { routingDescription: skillDescription! } : {}),
+      ...descriptions.record,
       updatedAt: now,
       proposedVersion: nextVersion,
       draftHash,
