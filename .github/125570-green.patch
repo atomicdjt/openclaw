@@ -1,0 +1,146 @@
+diff --git a/src/skills/workshop/types.ts b/src/skills/workshop/types.ts
+--- a/src/skills/workshop/types.ts
++++ b/src/skills/workshop/types.ts
+@@ -125,6 +125,8 @@ export type SkillProposalRecord = {
+   status: SkillProposalStatus;
+   title: string;
+   description: string;
++  /** Canonical routing description intended for the live skill after an update. */
++  routingDescription?: string;
+   createdAt: string;
+   updatedAt: string;
+   createdBy: SkillProposalSource;
+diff --git a/src/skills/workshop/store-record.ts b/src/skills/workshop/store-record.ts
+--- a/src/skills/workshop/store-record.ts
++++ b/src/skills/workshop/store-record.ts
+@@ -107,6 +107,7 @@ const skillProposalRecordSchema = z
+     status: z.enum(["pending", "applied", "rejected", "quarantined", "stale"]),
+     title: z.string(),
+     description: z.string(),
++    routingDescription: z.string().optional(),
+     createdAt: z.string(),
+     updatedAt: z.string(),
+     autonomousCapture: z.literal(true).optional(),
+diff --git a/src/skills/workshop/routing-description-provenance.ts b/src/skills/workshop/routing-description-provenance.ts
+new file mode 100644
+--- /dev/null
++++ b/src/skills/workshop/routing-description-provenance.ts
+@@ -0,0 +1,16 @@
++import type { SkillProposalRecord } from "./types.js";
++
++export const LEGACY_UPDATE_REDRAFT_MESSAGE =
++  "This pending skill update predates routing-description provenance. Redraft the update before revising or applying it.";
++
++/**
++ * Returns the canonical routing description for an update proposal.
++ * Legacy pending updates intentionally fail closed because their stored
++ * description cannot distinguish routing metadata from proposal summary text.
++ */
++export function requireUpdateRoutingDescription(
++  record: Pick<SkillProposalRecord, "kind" | "routingDescription">,
++): string | undefined {
++  if (record.kind !== "update") return undefined;
++  if (record.routingDescription === undefined) throw new Error(LEGACY_UPDATE_REDRAFT_MESSAGE);
++  return record.routingDescription;
++}
+diff --git a/src/skills/workshop/service.ts b/src/skills/workshop/service.ts
+--- a/src/skills/workshop/service.ts
++++ b/src/skills/workshop/service.ts
+@@ -24,6 +24,7 @@ import {
+   prepareSkillProposalDraft,
+   resolveUpdateProposalDescription,
+ } from "./proposal-draft.js";
++import { requireUpdateRoutingDescription } from "./routing-description-provenance.js";
+ import { hashSkillProposalRevision } from "./revision-hash.js";
+ import {
+   assertExpectedRevisionHash,
+@@ -329,6 +330,7 @@ export async function proposeUpdateSkill(
+     status: "pending",
+     title: `Update ${targetSkill.name}`,
+     description,
++    routingDescription: skillDescription,
+     createdAt: now,
+     updatedAt: now,
+     createdBy: input.createdBy ?? "skill-workshop",
+@@ -392,6 +394,7 @@ export async function reviseSkillProposal(
+   const revision = withPendingSkillProposalMutation(input, "revised", async (read) => {
+     const { record } = read;
++    const existingRoutingDescription = requireUpdateRoutingDescription(record);
+     assertInsideWorkspace(input.workspaceDir, record.target.skillFile, "skill file");
+     assertInsideWorkspace(input.workspaceDir, record.target.skillDir, "skill directory");
+ 
+@@ -431,10 +434,12 @@ export async function reviseSkillProposal(
+     const requestedContent = input.content ?? read.content;
+     const nextVersion = nextProposalVersion(record.proposedVersion);
+     const description = normalizeOptionalString(input.description) ?? record.description;
+     const skillDescription =
+       record.kind === "update"
+-        ? (normalizeOptionalString(parseSkillFrontmatter(requestedContent).description) ??
+-          normalizeOptionalString(parseSkillFrontmatter(read.content).description))
++        ? (input.content === undefined
++            ? existingRoutingDescription
++            : (normalizeOptionalString(parseSkillFrontmatter(input.content).description) ??
++              existingRoutingDescription))
+         : undefined;
+     const now = new Date().toISOString();
+     const prepared = prepareSkillProposalDraft({
+@@ -477,6 +482,7 @@ export async function reviseSkillProposal(
+     const revised: SkillProposalRecord = {
+       ...record,
+       description,
++      ...(record.kind === "update" ? { routingDescription: skillDescription! } : {}),
+       updatedAt: now,
+       proposedVersion: nextVersion,
+       draftHash,
+diff --git a/src/skills/workshop/apply-transition.ts b/src/skills/workshop/apply-transition.ts
+--- a/src/skills/workshop/apply-transition.ts
++++ b/src/skills/workshop/apply-transition.ts
+@@ -22,6 +22,7 @@ import { readSkillProposalTargetTreeSha256 } from "./proposal-bundle.js";
+ import { hashSkillProposalContent } from "./proposal-hash.js";
+ import { scanProposalBundle } from "./proposal-scan.js";
+ import { hashSkillProposalRevision } from "./revision-hash.js";
++import { requireUpdateRoutingDescription } from "./routing-description-provenance.js";
+ import type { NewSkillProposalEvent } from "./store-sqlite-event.js";
+ import { readStoredProposal } from "./store-sqlite-record.js";
+ import { clearSkillProposalRollback, writeSkillProposalRollback } from "./store-sqlite-rollback.js";
+@@ -135,6 +136,7 @@ export async function applySkillProposalTransition(
+       `Only pending proposals can be applied. Current status: ${initial.record.status}.`,
+     );
+   }
++  requireUpdateRoutingDescription(initial.record);
+   dependencies.assertExpectedRevisionHash(initial.revisionHash, input.expectedRevisionHash);
+ 
+   let evaluated: SkillProposalEvaluateResult;
+@@ -204,6 +206,7 @@ export async function applySkillProposalTransition(
+       if (record.status !== "pending") {
+         throw new Error(`Only pending proposals can be applied. Current status: ${record.status}.`);
+       }
++      requireUpdateRoutingDescription(record);
+       dependencies.assertExpectedRevisionHash(read.revisionHash, evaluated.evaluation.revisionHash);
+       if (hashSkillProposalContent(content) !== record.draftHash) {
+         throw new Error("Proposal draft changed without updating proposal metadata.");
+diff --git a/src/skills/workshop/service-description-boundary.test.ts b/src/skills/workshop/service-description-boundary.test.ts
+--- a/src/skills/workshop/service-description-boundary.test.ts
++++ b/src/skills/workshop/service-description-boundary.test.ts
+@@ -73,6 +73,7 @@ describe("Skill Workshop update description boundary", () => {
+     });
+ 
+     expect(proposal.record.description).toBe(proposalSummary);
++    expect(proposal.record.routingDescription).toBe(liveDescription);
+     expect(proposal.content).toContain(`description: ${JSON.stringify(liveDescription)}`);
+     expect(proposal.content).not.toContain(`description: ${JSON.stringify(proposalSummary)}`);
+@@ -88,6 +89,7 @@ describe("Skill Workshop update description boundary", () => {
+     });
+ 
+     expect(revised.record.description).toBe(revisedSummary);
++    expect(revised.record.routingDescription).toBe(liveDescription);
+     expect(revised.content).toContain(`description: ${JSON.stringify(liveDescription)}`);
+     expect(revised.content).not.toContain(`description: ${JSON.stringify(revisedSummary)}`);
+@@ -121,6 +123,7 @@ describe("Skill Workshop update description boundary", () => {
+     });
+ 
+     expect(replacement.record.description).toBe(replacementSummary);
++    expect(replacement.record.routingDescription).toBe(replacementDescription);
+     expect(replacement.content).toContain(
+       `description: ${JSON.stringify(replacementDescription)}`,
+     );
