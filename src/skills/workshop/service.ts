@@ -2,12 +2,12 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { sha256Hex } from "../../infra/crypto-digest.js";
 import { buildWorkspaceSkillStatus, resolveSkillStatusEntry } from "../discovery/status.js";
-import { parseSkillFrontmatter } from "../loading/frontmatter.js";
 import {
   assertInsideWorkspace,
   readWorkspaceSkillFile,
   readWorkspaceSupportFile,
 } from "../lifecycle/workspace-skill-write.js";
+import { parseSkillFrontmatter } from "../loading/frontmatter.js";
 import {
   applySkillProposalTransition,
   assertSkillProposalSupportTargetUnchanged,
@@ -25,6 +25,7 @@ import {
   resolveUpdateProposalDescription,
 } from "./proposal-draft.js";
 import { hashSkillProposalRevision } from "./revision-hash.js";
+import { requireUpdateRoutingDescription } from "./routing-description-provenance.js";
 import {
   assertExpectedRevisionHash,
   evaluateSkillProposal,
@@ -327,6 +328,7 @@ export async function proposeUpdateSkill(
     status: "pending",
     title: `Update ${targetSkill.name}`,
     description,
+    routingDescription: skillDescription,
     createdAt: now,
     updatedAt: now,
     createdBy: input.createdBy ?? "skill-workshop",
@@ -391,6 +393,7 @@ export async function reviseSkillProposal(
   const config = resolveSkillWorkshopConfig(input.config);
   const revision = withPendingSkillProposalMutation(input, "revised", async (read) => {
     const { record } = read;
+    const existingRoutingDescription = requireUpdateRoutingDescription(record);
     assertInsideWorkspace(input.workspaceDir, record.target.skillFile, "skill file");
     assertInsideWorkspace(input.workspaceDir, record.target.skillDir, "skill directory");
 
@@ -432,8 +435,10 @@ export async function reviseSkillProposal(
     const description = normalizeOptionalString(input.description) ?? record.description;
     const skillDescription =
       record.kind === "update"
-        ? (normalizeOptionalString(parseSkillFrontmatter(requestedContent).description) ??
-          normalizeOptionalString(parseSkillFrontmatter(read.content).description))
+        ? input.content === undefined
+          ? existingRoutingDescription
+          : (normalizeOptionalString(parseSkillFrontmatter(input.content).description) ??
+            existingRoutingDescription)
         : undefined;
     const now = new Date().toISOString();
     const prepared = prepareSkillProposalDraft({
@@ -473,6 +478,7 @@ export async function reviseSkillProposal(
     const revised: SkillProposalRecord = {
       ...record,
       description,
+      ...(record.kind === "update" ? { routingDescription: skillDescription! } : {}),
       updatedAt: now,
       proposedVersion: nextVersion,
       draftHash,
