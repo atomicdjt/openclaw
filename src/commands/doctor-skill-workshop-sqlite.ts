@@ -8,6 +8,7 @@ import { removePathWithinRoot } from "../infra/fs-safe-remove.js";
 import { pathExists, root, type Root } from "../infra/fs-safe.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../routing/session-key.js";
 import { LEGACY_UPDATE_REDRAFT_MESSAGE } from "../skills/workshop/routing-description-provenance.js";
+import { listStoredProposalRecords } from "../skills/workshop/store-sqlite-record.js";
 import {
   hashSkillProposalContent,
   importLegacySkillProposal,
@@ -18,7 +19,6 @@ import {
   validateSkillProposalRecord,
   validateSkillProposalRollback,
 } from "../skills/workshop/store.js";
-import { listStoredProposalRecords } from "../skills/workshop/store-sqlite-record.js";
 import type { SkillProposalRecord, SkillProposalRollback } from "../skills/workshop/types.js";
 
 const WORKSHOP_DIR = "skill-workshop";
@@ -322,7 +322,12 @@ export async function migrateLegacySkillWorkshopProposals(params: {
         migrated += 1;
       } catch (error) {
         if (isMissingPathError(error)) {
-          const stored = await readSkillProposalRecord(proposalId, { env }, {}, { reconcile: false });
+          const stored = await readSkillProposalRecord(
+            proposalId,
+            { env },
+            {},
+            { reconcile: false },
+          );
           if (stored) {
             // Healthy SQLite-backed proposals intentionally have no legacy
             // proposal.json. The SQLite-wide normalization pass below owns any
