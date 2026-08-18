@@ -1,0 +1,126 @@
+name: Temporary #125570 patch runner
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/125570-preserve-skill-description
+          fetch-depth: 0
+      - name: Refactor routing description ownership out of service
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          helper = Path("src/skills/workshop/routing-description-provenance.ts")
+          helper.write_text('''import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+          import { parseSkillFrontmatter } from "../loading/frontmatter.js";
+          import { resolveUpdateProposalDescription } from "./proposal-draft.js";
+          import type { SkillProposalRecord } from "./types.js";
+
+          const LEGACY_UPDATE_REDRAFT_MESSAGE =
+            "This pending skill update predates routing-description provenance. Redraft the update before revising or applying it.";
+
+          type DescriptionFields = {
+            draft: { description: string; skillDescription?: string };
+            record: { description: string; routingDescription?: string };
+          };
+
+          /**
+           * Returns the canonical routing description for an update proposal.
+           * Legacy pending updates intentionally fail closed because their stored
+           * description cannot distinguish routing metadata from proposal summary text.
+           */
+          export function requireUpdateRoutingDescription(
+            record: Pick<SkillProposalRecord, "kind" | "routingDescription">,
+          ): string | undefined {
+            if (record.kind !== "update") {
+              return undefined;
+            }
+            if (record.routingDescription === undefined) {
+              throw new Error(LEGACY_UPDATE_REDRAFT_MESSAGE);
+            }
+            return record.routingDescription;
+          }
+
+          export function resolveForUpdate(
+            requestedDescription: string | undefined,
+            content: string,
+            fallbackRoutingDescription: string,
+          ): DescriptionFields {
+            const description = resolveUpdateProposalDescription(
+              requestedDescription,
+              fallbackRoutingDescription,
+            );
+            const routingDescription =
+              normalizeOptionalString(parseSkillFrontmatter(content).description) ??
+              fallbackRoutingDescription;
+            return {
+              draft: { description, skillDescription: routingDescription },
+              record: { description, routingDescription },
+            };
+          }
+
+          export function resolveForRevision(
+            record: Pick<SkillProposalRecord, "kind" | "description" | "routingDescription">,
+            requestedDescription: string | undefined,
+            content: string | undefined,
+          ): DescriptionFields {
+            const description = normalizeOptionalString(requestedDescription) ?? record.description;
+            if (record.kind !== "update") {
+              return { draft: { description }, record: { description } };
+            }
+            const existingRoutingDescription = requireUpdateRoutingDescription(record);
+            const routingDescription =
+              content === undefined
+                ? existingRoutingDescription
+                : (normalizeOptionalString(parseSkillFrontmatter(content).description) ??
+                  existingRoutingDescription);
+            return {
+              draft: { description, skillDescription: routingDescription },
+              record: { description, routingDescription },
+            };
+          }
+          '''.replace("          ", ""), encoding="utf-8")
+
+          service = Path("src/skills/workshop/service.ts")
+          text = service.read_text(encoding="utf-8")
+          replacements = [
+            ('import { parseSkillFrontmatter } from "../loading/frontmatter.js";\n', ''),
+            ('import {\n  nextProposalVersion,\n  prepareSkillProposalDraft,\n  resolveUpdateProposalDescription,\n} from "./proposal-draft.js";\n', 'import { nextProposalVersion, prepareSkillProposalDraft } from "./proposal-draft.js";\n'),
+            ('import { requireUpdateRoutingDescription } from "./routing-description-provenance.js";\n', 'import { resolveForRevision, resolveForUpdate } from "./routing-description-provenance.js";\n'),
+            ('  const description = resolveUpdateProposalDescription(input.description, targetSkill.description);\n  const skillDescription =\n    normalizeOptionalString(parseSkillFrontmatter(draftContent).description) ??\n    targetSkill.description;\n', '  const descriptions = resolveForUpdate(input.description, draftContent, targetSkill.description);\n'),
+            ('    description,\n    skillDescription,\n    content: draftContent,\n', '    ...descriptions.draft,\n    content: draftContent,\n'),
+            ('    title: `Update ${targetSkill.name}`,\n    description,\n    routingDescription: skillDescription,\n    createdAt: now,\n', '    title: `Update ${targetSkill.name}`,\n    ...descriptions.record,\n    createdAt: now,\n'),
+            ('    const { record } = read;\n    const existingRoutingDescription = requireUpdateRoutingDescription(record);\n', '    const { record } = read;\n'),
+            ('    const description = normalizeOptionalString(input.description) ?? record.description;\n    const skillDescription =\n      record.kind === "update"\n        ? input.content === undefined\n          ? existingRoutingDescription\n          : (normalizeOptionalString(parseSkillFrontmatter(input.content).description) ??\n            existingRoutingDescription)\n        : undefined;\n', '    const descriptions = resolveForRevision(record, input.description, input.content);\n'),
+            ('      name: record.target.skillKey,\n      description,\n      ...(skillDescription ? { skillDescription } : {}),\n      content: requestedContent,\n', '      name: record.target.skillKey,\n      ...descriptions.draft,\n      content: requestedContent,\n'),
+            ('    const revised: SkillProposalRecord = {\n      ...record,\n      description,\n      ...(record.kind === "update" ? { routingDescription: skillDescription! } : {}),\n      updatedAt: now,\n', '    const revised: SkillProposalRecord = {\n      ...record,\n      ...descriptions.record,\n      updatedAt: now,\n'),
+          ]
+          for old, new in replacements:
+            count = text.count(old)
+            if count != 1:
+              raise SystemExit(f"expected exactly one service replacement, found {count}: {old[:80]!r}")
+            text = text.replace(old, new, 1)
+          service.write_text(text, encoding="utf-8")
+          PY
+
+          git diff --check
+      - name: Commit to contribution branch
+        shell: bash
+        run: |
+          git config user.name "David Turner"
+          git config user.email "davidelsey9513@gmail.com"
+          git add src/skills/workshop/routing-description-provenance.ts src/skills/workshop/service.ts
+          git commit -m "refactor(skills): isolate routing description provenance"
+          git push origin HEAD:fix/125570-preserve-skill-description
