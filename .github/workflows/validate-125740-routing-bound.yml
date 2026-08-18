@@ -76,6 +76,8 @@ jobs:
             packages/gateway-protocol/src/schema/agents-models-skills-routing-description.test.ts
       - name: Persist mechanical formatting only after validation
         shell: bash
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
           if git diff --quiet; then
@@ -95,4 +97,4 @@ jobs:
             src/gateway/server-methods/skills-workspace-handler.test.ts \
             packages/gateway-protocol/src/schema/agents-models-skills-routing-description.test.ts
           git commit -m "style: format #125740 routing repair"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          git push origin "HEAD:${HEAD_REF}"
