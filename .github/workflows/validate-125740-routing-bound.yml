@@ -31,6 +31,7 @@ jobs:
           node scripts/run-vitest.mjs \
             src/skills/workshop/service-description-boundary.test.ts \
             src/commands/doctor-skill-workshop-routing-provenance.test.ts \
+            src/gateway/server-methods/skills-workspace-handler.test.ts \
             packages/gateway-protocol/src/schema/agents-models-skills-routing-description.test.ts
       - name: Changed-file static checks
         shell: bash
@@ -41,7 +42,8 @@ jobs:
             packages/gateway-protocol/src/schema/agents-models-skills.ts \
             src/skills/workshop/service-query.ts \
             src/skills/workshop/frontmatter.ts \
-            src/gateway/server-methods/skills-workspace-handler.ts
+            src/gateway/server-methods/skills-workspace-handler.ts \
+            src/gateway/server-methods/skills-workspace-handler.test.ts
       - name: Protocol generation check
         run: pnpm protocol:check
       - name: Formatter check
@@ -55,4 +57,5 @@ jobs:
             src/skills/workshop/service-query.ts \
             src/skills/workshop/frontmatter.ts \
             src/gateway/server-methods/skills-workspace-handler.ts \
+            src/gateway/server-methods/skills-workspace-handler.test.ts \
             packages/gateway-protocol/src/schema/agents-models-skills-routing-description.test.ts
