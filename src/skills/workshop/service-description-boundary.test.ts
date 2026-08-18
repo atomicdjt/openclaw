@@ -10,6 +10,7 @@ import { parseSkillFrontmatter } from "../loading/frontmatter.js";
 import { writeSkill } from "../test-support/e2e-test-helpers.js";
 import {
   applySkillProposal,
+  inspectSkillProposal,
   proposeCreateSkill,
   proposeUpdateSkill,
   reviseSkillProposal,
@@ -112,13 +113,26 @@ describe("Skill Workshop update description boundary", () => {
     expect(proposal.content).toContain(`description: ${JSON.stringify(liveDescription)}`);
     expect(proposal.content).not.toContain(`description: ${JSON.stringify(proposalSummary)}`);
 
+    const inspected = await inspectSkillProposal(proposal.record.id, {
+      workspaceDir,
+      env: testState.env,
+    });
+    if (!inspected) {
+      throw new Error(`Expected proposal inspection: ${proposal.record.id}`);
+    }
+    expect(inspected.revisionHash).toBe(proposal.revisionHash);
+    expect(inspected.record).not.toHaveProperty("routingDescription");
+    expect(inspected.content).not.toContain(liveDescription);
+    expect(parseSkillFrontmatter(inspected.content).description).toBeUndefined();
+
     const revisedSummary = "Document the dead-man storage correction.";
     const revised = await reviseSkillProposal({
       workspaceDir,
       env: testState.env,
       proposalId: proposal.record.id,
-      expectedRevisionHash: proposal.revisionHash,
+      expectedRevisionHash: inspected.revisionHash,
       description: revisedSummary,
+      content: inspected.content,
     });
 
     expect(revised.record.description).toBe(revisedSummary);
