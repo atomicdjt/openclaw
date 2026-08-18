@@ -172,6 +172,35 @@ Final behavior.
     );
   });
 
+  it("rejects routing descriptions that exceed the proposal output bound", async () => {
+    const workspaceDir = await tempDirs.make("openclaw-skill-description-oversized-");
+    await createOwnedSkill({
+      workspaceDir,
+      name: "oversized-routing",
+      description: "Route oversized-routing for ordinary bounded workflows.",
+      body: "# Oversized Routing\n\nExisting behavior.\n",
+    });
+    const oversizedRoutingDescription = "r".repeat(4_001);
+
+    await expect(
+      proposeUpdateSkill({
+        workspaceDir,
+        env: testState.env,
+        skillName: "oversized-routing",
+        description: "Update the oversized routing skill.",
+        content: `---
+name: oversized-routing
+description: ${JSON.stringify(oversizedRoutingDescription)}
+---
+
+# Oversized Routing
+
+Updated behavior.
+`,
+      }),
+    ).rejects.toThrow(/routing description is too large/i);
+  });
+
   it("requires a legacy pending update to be redrafted before revision", async () => {
     const workspaceDir = await tempDirs.make("openclaw-skill-description-legacy-revise-");
     const liveDescription = "Route legacy-revise for durable scheduling and recovery workflows.";
