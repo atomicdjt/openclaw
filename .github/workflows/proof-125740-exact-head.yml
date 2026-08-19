@@ -1,0 +1,58 @@
+name: PR 125740 Exact Head Proof
+
+on:
+  push:
+    branches:
+      - proof/125740-a2fe6d9
+
+permissions:
+  contents: read
+
+jobs:
+  exact-head-proof:
+    runs-on: ubuntu-latest
+    env:
+      PROOF_SHA: a2fe6d930e11ae21c8e89c5683980beef9064682
+      UPSTREAM_MAIN_SHA: 407c8cdb34406ba91501f9f69f8e806e3644493d
+    steps:
+      - name: Check out exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: a2fe6d930e11ae21c8e89c5683980beef9064682
+          fetch-depth: 0
+
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PROOF_SHA"
+          echo "PROOF_HEAD=$(git rev-parse HEAD)"
+          echo "UPSTREAM_PARENT=$(git rev-parse HEAD^)"
+          test "$(git rev-parse HEAD^)" = "$UPSTREAM_MAIN_SHA"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Stored-SQLite Doctor provenance proof
+        run: node scripts/run-vitest.mjs src/commands/doctor-skill-workshop-routing-provenance.test.ts
+
+      - name: Real-workspace routing preservation proof
+        run: node scripts/run-vitest.mjs src/skills/workshop/service-description-boundary.test.ts
+
+      - name: Public/model projection boundary proofs
+        run: node scripts/run-vitest.mjs src/gateway/server-methods/skills-workspace-handler.test.ts packages/gateway-protocol/src/schema/agents-models-skills-routing-description.test.ts
+
+      - name: Protocol compatibility check
+        run: pnpm protocol:check
+
+      - name: Patch whitespace check
+        run: git diff --check "$UPSTREAM_MAIN_SHA" "$PROOF_SHA"
