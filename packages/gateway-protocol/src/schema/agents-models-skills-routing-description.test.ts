@@ -33,6 +33,7 @@ function proposalRecord() {
   };
 }
 
+// Public Gateway proposal records intentionally exclude internal routing provenance.
 describe("Skill Workshop routing description protocol", () => {
   it("keeps internal routingDescription out of public proposal records", () => {
     const baseResult = {
