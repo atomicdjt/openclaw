@@ -9,6 +9,7 @@ import {
   readWorkspaceSkillFile,
 } from "../lifecycle/workspace-skill-write.js";
 import { transitionPendingSkillProposalToStale } from "./apply-transition.js";
+import { stripProposalDescriptionForInspection } from "./frontmatter.js";
 import { dispatchSkillProposalChanged } from "./plugin-hooks.js";
 import { hashSkillProposalRevision } from "./revision-hash.js";
 import {
@@ -41,6 +42,18 @@ function proposalScope(options: SkillProposalScopeOptions) {
   return {
     ...(options.agentId ? { agentId: options.agentId } : {}),
     ...(options.workspaceDir ? { workspaceDir: options.workspaceDir } : {}),
+  };
+}
+
+function projectProposalForInspection(read: SkillProposalReadResult): SkillProposalReadResult {
+  if (read.record.kind !== "update" || read.record.routingDescription === undefined) {
+    return read;
+  }
+  const { routingDescription: _routingDescription, ...record } = read.record;
+  return {
+    ...read,
+    record,
+    content: stripProposalDescriptionForInspection(read.content),
   };
 }
 
@@ -113,9 +126,11 @@ export async function inspectSkillProposal(
   if (!read) {
     return null;
   }
-  return await hydrateProposalSupportFiles(
-    await reconcilePendingCreateProposal(read, options),
-    options.env,
+  return projectProposalForInspection(
+    await hydrateProposalSupportFiles(
+      await reconcilePendingCreateProposal(read, options),
+      options.env,
+    ),
   );
 }
 

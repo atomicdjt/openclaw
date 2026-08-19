@@ -16,6 +16,7 @@ import { resolveSkillWorkshopConfig } from "./config.js";
 import { createSkillProposalEvent, dispatchSkillProposalChanged } from "./plugin-hooks.js";
 import { nextProposalVersion, prepareSkillProposalDraft } from "./proposal-draft.js";
 import { hashSkillProposalRevision } from "./revision-hash.js";
+import { resolveForRevision } from "./routing-description-provenance.js";
 import {
   assertExpectedRevisionHash,
   evaluateSkillProposal,
@@ -123,11 +124,11 @@ export async function reviseSkillProposal(
         : input.supportFiles;
     const requestedContent = input.content ?? read.content;
     const nextVersion = nextProposalVersion(record.proposedVersion);
-    const description = normalizeOptionalString(input.description) ?? record.description;
+    const descriptions = resolveForRevision(record, input.description, input.content);
     const now = new Date().toISOString();
     const prepared = prepareSkillProposalDraft({
       name: record.target.skillKey,
-      description,
+      ...descriptions.draft,
       content: requestedContent,
       fallbackFrontmatterContent: read.content,
       version: nextVersion,
@@ -160,7 +161,7 @@ export async function reviseSkillProposal(
     const previousSupportFiles = record.supportFiles;
     const revised: SkillProposalRecord = {
       ...record,
-      description,
+      ...descriptions.record,
       updatedAt: now,
       proposedVersion: nextVersion,
       draftHash,

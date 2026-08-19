@@ -39,6 +39,7 @@ type PreparedSkillProposalDraft = {
 export function prepareSkillProposalDraft(input: {
   name: string;
   description: string;
+  skillDescription?: string;
   content: string;
   fallbackFrontmatterContent?: string;
   version?: string;
@@ -55,7 +56,7 @@ export function prepareSkillProposalDraft(input: {
     const supportFiles = prepareSkillProposalSupportFiles(input.supportFiles);
     const content = renderProposalMarkdown({
       name: input.name,
-      description: input.description,
+      description: input.skillDescription ?? input.description,
       content: input.content,
       fallbackFrontmatterContent: input.fallbackFrontmatterContent,
       version: input.version,

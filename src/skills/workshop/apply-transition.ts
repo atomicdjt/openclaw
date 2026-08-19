@@ -25,6 +25,7 @@ import { readSkillProposalTargetTreeSha256 } from "./proposal-bundle.js";
 import { hashSkillProposalContent } from "./proposal-hash.js";
 import { scanProposalBundle } from "./proposal-scan.js";
 import { hashSkillProposalRevision } from "./revision-hash.js";
+import { requireUpdateRoutingDescription } from "./routing-description-provenance.js";
 import type { NewSkillProposalEvent } from "./store-sqlite-event.js";
 import { readStoredProposal } from "./store-sqlite-record.js";
 import { clearSkillProposalRollback, writeSkillProposalRollback } from "./store-sqlite-rollback.js";
@@ -137,6 +138,7 @@ export async function applySkillProposalTransition(
       `Only pending proposals can be applied. Current status: ${initial.record.status}.`,
     );
   }
+  requireUpdateRoutingDescription(initial.record);
   dependencies.assertExpectedRevisionHash(initial.revisionHash, input.expectedRevisionHash);
 
   let evaluated: SkillProposalEvaluateResult;
@@ -209,6 +211,7 @@ export async function applySkillProposalTransition(
       if (record.status !== "pending") {
         throw new Error(`Only pending proposals can be applied. Current status: ${record.status}.`);
       }
+      requireUpdateRoutingDescription(record);
       dependencies.assertExpectedRevisionHash(read.revisionHash, evaluated.evaluation.revisionHash);
       if (hashSkillProposalContent(content) !== record.draftHash) {
         throw new Error("Proposal draft changed without updating proposal metadata.");

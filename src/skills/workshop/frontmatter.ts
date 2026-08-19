@@ -85,6 +85,20 @@ export function stripProposalFrontmatterForSkill(content: string): string {
   return result.endsWith("\n") ? result : `${result}\n`;
 }
 
+/** Removes internal routing provenance from proposal content returned by inspection. */
+export function stripProposalDescriptionForInspection(content: string): string {
+  const normalized = normalizeNewlines(content);
+  const extracted = extractFrontmatterBlock(normalized);
+  if (!extracted) {
+    return normalized.endsWith("\n") ? normalized : `${normalized}\n`;
+  }
+
+  const body = extracted.body.replace(/^\n+/, "");
+  const keptFrontmatter = filterFrontmatterBlock(extracted.block, ["description"]);
+  const result = keptFrontmatter ? `---\n${keptFrontmatter}\n---\n\n${body}` : body;
+  return result.endsWith("\n") ? result : `${result}\n`;
+}
+
 function filterFrontmatterBlock(block: string, keysToDrop: readonly string[]): string {
   const drop = new Set(keysToDrop.map((key) => key.toLowerCase()));
   const lines = block.split("\n");
