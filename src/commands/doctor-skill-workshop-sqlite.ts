@@ -7,11 +7,15 @@ import { isMissingPathError } from "../infra/errors.js";
 import { removePathWithinRoot } from "../infra/fs-safe-remove.js";
 import { pathExists, root, type Root } from "../infra/fs-safe.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../routing/session-key.js";
+import { LEGACY_UPDATE_REDRAFT_MESSAGE } from "../skills/workshop/routing-description-provenance.js";
+import { listStoredProposalRecords } from "../skills/workshop/store-sqlite-record.js";
 import {
   hashSkillProposalContent,
   importLegacySkillProposal,
   readSkillProposal,
+  readSkillProposalRecord,
   readSkillProposalRollback,
+  updateSkillProposalRecord,
   validateSkillProposalRecord,
   validateSkillProposalRollback,
 } from "../skills/workshop/store.js";
@@ -123,6 +127,111 @@ async function verifyImportedProposal(params: {
   }
 }
 
+function requiresLegacyUpdateRedraft(record: SkillProposalRecord): boolean {
+  return (
+    record.kind === "update" &&
+    record.status === "pending" &&
+    record.routingDescription === undefined
+  );
+}
+
+async function normalizeLegacyUpdateProvenance(params: {
+  config: OpenClawConfig;
+  env: NodeJS.ProcessEnv;
+  proposalId: string;
+}): Promise<boolean> {
+  // Inspect only persisted metadata first. Doctor can therefore identify the
+  // compatibility case even when a draft is degraded or missing, without
+  // reconciling unrelated records as a side effect of enumeration.
+  const initial = await readSkillProposalRecord(
+    params.proposalId,
+    { env: params.env },
+    {},
+    { reconcile: false },
+  );
+  if (!initial) {
+    throw new Error("SQLite verification failed before legacy update normalization");
+  }
+  if (!requiresLegacyUpdateRedraft(initial)) {
+    return false;
+  }
+
+  // A targeted legacy update may have a rollback journal proving that its
+  // target is still previous, fully proposed, or partially written. Reconcile
+  // that interrupted apply before terminalizing it so recovery facts are not
+  // stranded and a partially mutated live skill is never left behind.
+  const recovered = await readSkillProposal(
+    params.proposalId,
+    { env: params.env },
+    {},
+    { config: params.config },
+  );
+  if (!recovered) {
+    throw new Error("SQLite verification failed after legacy update recovery");
+  }
+  if (!requiresLegacyUpdateRedraft(recovered.record)) {
+    return false;
+  }
+  if (await readSkillProposalRollback(params.proposalId, { env: params.env })) {
+    throw new Error(
+      "legacy update rollback could not be reconciled; persisted recovery evidence was retained for manual recovery",
+    );
+  }
+
+  const now = new Date().toISOString();
+  const stale: SkillProposalRecord = {
+    ...recovered.record,
+    status: "stale",
+    updatedAt: now,
+    staleAt: now,
+    statusReason: LEGACY_UPDATE_REDRAFT_MESSAGE,
+  };
+  await updateSkillProposalRecord({
+    record: stale,
+    store: { env: params.env },
+  });
+  return true;
+}
+
+async function normalizeStoredLegacyUpdates(params: {
+  config: OpenClawConfig;
+  env: NodeJS.ProcessEnv;
+}): Promise<{ normalized: number; warnings: string[] }> {
+  let records: SkillProposalRecord[];
+  try {
+    records = listStoredProposalRecords({ env: params.env });
+  } catch (error) {
+    return {
+      normalized: 0,
+      warnings: [`Failed to inspect stored Skill Workshop proposals: ${String(error)}`],
+    };
+  }
+
+  let normalized = 0;
+  const warnings: string[] = [];
+  for (const record of records) {
+    if (!requiresLegacyUpdateRedraft(record)) {
+      continue;
+    }
+    try {
+      if (
+        await normalizeLegacyUpdateProvenance({
+          config: params.config,
+          env: params.env,
+          proposalId: record.id,
+        })
+      ) {
+        normalized += 1;
+      }
+    } catch (error) {
+      warnings.push(
+        `Failed to normalize stored Skill Workshop proposal ${record.id}: ${String(error)}`,
+      );
+    }
+  }
+  return { normalized, warnings };
+}
+
 async function migrateProposal(params: {
   config: OpenClawConfig;
   env: NodeJS.ProcessEnv;
@@ -175,79 +284,92 @@ async function migrateProposal(params: {
   return result;
 }
 
-/** Import verified legacy proposal sidecars, then remove only the imported JSON metadata. */
+/** Import legacy sidecars, then normalize every persisted update lacking provenance. */
 export async function migrateLegacySkillWorkshopProposals(params: {
   config: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
 }): Promise<MigrationResult> {
   const env = params.env ?? process.env;
   const stateDir = resolveStateDir(env);
-  if (!(await pathExists(path.join(stateDir, PROPOSALS_DIR)))) {
-    if (!(await pathExists(path.join(stateDir, MANIFEST_PATH)))) {
-      return { changes: [], warnings: [], detected: 0, migrated: 0 };
+  const warnings: string[] = [];
+  const changes: string[] = [];
+  let proposalIds: string[] = [];
+  let migrated = 0;
+
+  const hadProposalDir = await pathExists(path.join(stateDir, PROPOSALS_DIR));
+  if (hadProposalDir) {
+    const stateRoot = await root(stateDir);
+    try {
+      const entries = await stateRoot.list(PROPOSALS_DIR, { withFileTypes: true });
+      proposalIds = entries
+        .filter((entry) => entry.isDirectory && PROPOSAL_ID_PATTERN.test(entry.name))
+        .map((entry) => entry.name)
+        .toSorted((left, right) => left.localeCompare(right));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "not-found") {
+        warnings.push(`Failed to inspect legacy Skill Workshop proposals: ${String(error)}`);
+      }
     }
-    await removePathWithinRoot({ rootDir: stateDir, relativePath: MANIFEST_PATH });
-    return {
-      changes: ["Removed the empty legacy Skill Workshop proposal index."],
-      warnings: [],
-      detected: 0,
-      migrated: 0,
-    };
-  }
-  const stateRoot = await root(stateDir);
-  let entries;
-  try {
-    entries = await stateRoot.list(PROPOSALS_DIR, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "not-found") {
-      return { changes: [], warnings: [], detected: 0, migrated: 0 };
+
+    for (const proposalId of proposalIds) {
+      try {
+        await migrateProposal({
+          config: params.config,
+          env,
+          proposalId,
+          stateRoot,
+        });
+        migrated += 1;
+      } catch (error) {
+        if (isMissingPathError(error)) {
+          const stored = await readSkillProposalRecord(
+            proposalId,
+            { env },
+            {},
+            { reconcile: false },
+          );
+          if (stored) {
+            // Healthy SQLite-backed proposals intentionally have no legacy
+            // proposal.json. The SQLite-wide normalization pass below owns any
+            // routing-provenance upgrade that record still needs.
+            continue;
+          }
+        }
+        warnings.push(`Failed to migrate Skill Workshop proposal ${proposalId}: ${String(error)}`);
+      }
     }
-    return {
-      changes: [],
-      warnings: [`Failed to inspect legacy Skill Workshop proposals: ${String(error)}`],
-      detected: 0,
-      migrated: 0,
-    };
   }
 
-  const proposalIds = entries
-    .filter((entry) => entry.isDirectory && PROPOSAL_ID_PATTERN.test(entry.name))
-    .map((entry) => entry.name)
-    .toSorted((left, right) => left.localeCompare(right));
-  const warnings: string[] = [];
-  let migrated = 0;
-  for (const proposalId of proposalIds) {
-    try {
-      await migrateProposal({
-        config: params.config,
-        env,
-        proposalId,
-        stateRoot,
-      });
-      migrated += 1;
-    } catch (error) {
-      if (isMissingPathError(error)) {
-        if (await readSkillProposal(proposalId, { env }, {}, { reconcile: false })) {
-          continue;
+  const hadLegacyManifest = await pathExists(path.join(stateDir, MANIFEST_PATH));
+  if (hadLegacyManifest) {
+    await removePathWithinRoot({ rootDir: stateDir, relativePath: MANIFEST_PATH }).catch(
+      (error: unknown) => {
+        if (!isMissingPathError(error)) {
+          warnings.push(`Failed to remove legacy Skill Workshop proposal index: ${String(error)}`);
         }
-      }
-      warnings.push(`Failed to migrate Skill Workshop proposal ${proposalId}: ${String(error)}`);
+      },
+    );
+    if (!hadProposalDir) {
+      changes.push("Removed the empty legacy Skill Workshop proposal index.");
     }
   }
-  await removePathWithinRoot({ rootDir: stateDir, relativePath: MANIFEST_PATH }).catch(
-    (error: unknown) => {
-      if (!isMissingPathError(error)) {
-        warnings.push(`Failed to remove legacy Skill Workshop proposal index: ${String(error)}`);
-      }
-    },
-  );
+
+  const normalized = await normalizeStoredLegacyUpdates({ config: params.config, env });
+  warnings.push(...normalized.warnings);
+
+  if (migrated > 0) {
+    changes.push(
+      `Migrated ${migrated} Skill Workshop proposal${migrated === 1 ? "" : "s"} into shared SQLite.`,
+    );
+  }
+  if (normalized.normalized > 0) {
+    changes.push(
+      `Marked ${normalized.normalized} stored legacy Skill Workshop update proposal${normalized.normalized === 1 ? "" : "s"} stale for redraft.`,
+    );
+  }
+
   return {
-    changes:
-      migrated > 0
-        ? [
-            `Migrated ${migrated} Skill Workshop proposal${migrated === 1 ? "" : "s"} into shared SQLite.`,
-          ]
-        : [],
+    changes,
     warnings,
     detected: proposalIds.length,
     migrated,

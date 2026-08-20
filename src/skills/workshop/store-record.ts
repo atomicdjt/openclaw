@@ -133,6 +133,7 @@ const skillProposalRecordSchema = z
     status: z.enum(["pending", "applied", "rejected", "quarantined", "stale"]),
     title: z.string(),
     description: z.string(),
+    routingDescription: z.string().optional(),
     createdAt: z.string(),
     updatedAt: z.string(),
     autonomousCapture: z.literal(true).optional(),

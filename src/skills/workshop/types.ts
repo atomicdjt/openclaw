@@ -146,6 +146,8 @@ export type SkillProposalRecord = {
   status: SkillProposalStatus;
   title: string;
   description: string;
+  /** Canonical routing description intended for the live skill after an update. */
+  routingDescription?: string;
   createdAt: string;
   updatedAt: string;
   createdBy: SkillProposalSource;

@@ -10,8 +10,9 @@ import { resolveSkillWorkshopConfig } from "./config.js";
 import { stripProposalFrontmatterForSkill } from "./frontmatter.js";
 import { isWorkshopOwnedSkillDir } from "./ownership.js";
 import { createSkillProposalEvent, dispatchSkillProposalChanged } from "./plugin-hooks.js";
-import { prepareSkillProposalDraft, resolveUpdateProposalDescription } from "./proposal-draft.js";
+import { prepareSkillProposalDraft } from "./proposal-draft.js";
 import { hashSkillProposalRevision } from "./revision-hash.js";
+import { resolveForUpdate } from "./routing-description-provenance.js";
 import {
   createSkillProposalId,
   hashSkillProposalContent,
@@ -251,12 +252,12 @@ export async function proposeUpdateSkill(
   if (draftContent === undefined) {
     throw new Error("Update proposal requires content or composePatch.");
   }
-  const description = resolveUpdateProposalDescription(input.description, targetSkill.description);
+  const descriptions = resolveForUpdate(input.description, draftContent, targetSkill.description);
 
   const now = new Date().toISOString();
   const prepared = prepareSkillProposalDraft({
     name: targetSkill.skillKey,
-    description,
+    ...descriptions.draft,
     content: draftContent,
     fallbackFrontmatterContent: currentContent,
     date: now,
@@ -288,7 +289,7 @@ export async function proposeUpdateSkill(
     kind: "update",
     status: "pending",
     title: `Update ${targetSkill.name}`,
-    description,
+    ...descriptions.record,
     createdAt: now,
     updatedAt: now,
     createdBy: input.createdBy ?? "skill-workshop",

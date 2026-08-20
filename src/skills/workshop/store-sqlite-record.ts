@@ -56,6 +56,20 @@ export function readStoredProposal(
   return record ? { record, row } : null;
 }
 
+/** Return all valid persisted proposal records without reconciling or reading draft files. */
+export function listStoredProposalRecords(
+  options: SkillWorkshopStoreOptions = {},
+): SkillProposalRecord[] {
+  const { database, kysely } = openSkillWorkshopStore(options);
+  return executeSqliteQuerySync(
+    database.db,
+    kysely.selectFrom("skill_workshop_proposals").selectAll().orderBy("proposal_id", "asc"),
+  ).rows.flatMap((row) => {
+    const record = parseSkillProposalRow(row);
+    return record ? [record] : [];
+  });
+}
+
 function proposalRowValues(params: {
   record: SkillProposalRecord;
   ownerAgentId: string | null;
