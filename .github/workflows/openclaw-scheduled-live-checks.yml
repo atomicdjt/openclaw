@@ -20,6 +20,7 @@ env:
 
 jobs:
   live_and_openwebui_checks:
+    if: ${{ github.event_name != 'schedule' || github.repository == 'openclaw/openclaw' }}
     permissions:
       actions: read
       contents: read
