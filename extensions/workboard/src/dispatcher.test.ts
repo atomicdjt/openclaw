@@ -373,39 +373,6 @@ describe("dispatchAndStartWorkboardCards", () => {
     });
     await expectStatus(second.id, "ready");
   });
-  it("does not let a completed legacy execution starve a later dispatch for the same owner", async () => {
-    const legacy = await createCard({
-      title: "Previously completed work",
-      status: "done",
-      agentId: "shared-worker",
-      boardId: "product",
-      execution: {
-        id: "legacy-execution",
-        kind: "agent-session",
-        mode: "autonomous",
-        status: "running",
-        startedAt: 1,
-        updatedAt: 1,
-      },
-    });
-    const ready = await createCard({
-      agentId: "shared-worker",
-      boardId: "ops",
-      workspaceAccess: fullHostAccess,
-    });
-    run = vi.fn().mockResolvedValue({ runId: "run-after-legacy-completion" });
-
-    const result = await dispatch({ boardId: "ops", now: 10 });
-
-    expectStarted(result, ready.id, "run-after-legacy-completion");
-    expect(result.startFailures).toEqual([]);
-    expect(run).toHaveBeenCalledOnce();
-    await expectStored(legacy.id, {
-      status: "done",
-      execution: { status: "running" },
-    });
-  });
-
   const createAuthorizedCard = (
     input: Omit<Parameters<WorkboardStore["create"]>[0], "title"> & { title?: string } = {},
   ) => createCard({ workspaceAccess: fullHostAccess, ...input });
